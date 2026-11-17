@@ -1437,6 +1437,12 @@ function lerpSweep(t) {
 }
 
 function updateCamera(dt) {
+  if (G._shotCam) {
+    const s = G._shotCam;
+    camera.position.set(s.p[0], s.p[1], s.p[2]);
+    camera.lookAt(s.l[0], s.l[1], s.l[2]);
+    return;
+  }
   G.shake = Math.max(0, G.shake - dt * 2.5);
   const sh = G.shake * (CAPTURE ? 0.6 : 1);
   camShake.set((Math.random() - 0.5) * sh, (Math.random() - 0.5) * sh, (Math.random() - 0.5) * sh * 0.5);
@@ -1985,6 +1991,6 @@ if (CAPTURE) {
 } else requestAnimationFrame(loop);
 
 window.__dbg = {
-  G, hero, ball, table, H, Snd, AP, camState, startGame, enterPortal, leavePortal, openRiftExit,
+  G, hero, ball, table, H, Snd, AP, camState, camera, startGame, enterPortal, leavePortal, openRiftExit,
   world, BOUNDS, keys, input, resetBallToPlunger, startMultiball, reentryW, ModeMusic, get player() { return player; }, get titleArmed() { return titleArmed; },
 };
