@@ -77,6 +77,10 @@ async function state(page) {
       reV: d.reentryW && d.reentryW.flight ? +((d.reentryW.flight.vSpeed || 0).toFixed(2)) : null,
       reGrade: d.reentryW && d.reentryW.flight ? (d.reentryW.flight.grade || '') : '',
       keyS: !!(d.keys && d.keys.KeyS), keyW: !!(d.keys && d.keys.KeyW),
+      music: d.ModeMusic && d.ModeMusic.url ? String(d.ModeMusic.url) : '',
+      musicPaused: d.ModeMusic && d.ModeMusic.el ? !!d.ModeMusic.el.paused : null,
+      musicVol: d.ModeMusic ? +((d.ModeMusic.vol || 0).toFixed(2)) : 0,
+      musicOut: d.ModeMusic && d.ModeMusic.outgoing ? (d.ModeMusic.outgoing.src || 'yes') : null,
     };
   });
 }
@@ -368,6 +372,10 @@ async function placeBall(page, x, z, opts) {
   st = await waitFor(p, s => s.mode === 'reentry', 20000);
   if (st && st.mode === 'reentry') pass('reentry-arrive', 'phase=' + st.rePhase + ' alt=' + st.reAlt);
   else fail('reentry-arrive', JSON.stringify(st));
+  st = await waitFor(p, s => s.mode === 'reentry' && /reentry\.(ogg|mp3)/i.test(s.music || ''), 8000);
+  if (st && /reentry\.(ogg|mp3)/i.test(st.music || '')) {
+    pass('reentry-music-starts', 'src=' + st.music + ' paused=' + st.musicPaused + ' vol=' + st.musicVol);
+  } else fail('reentry-music-starts', JSON.stringify({ music: st && st.music, paused: st && st.musicPaused, vol: st && st.musicVol }));
 
   st = await waitFor(p, s => s.mode === 'reentry' && (s.rePhase === 'reentry' || s.rePhase === 'undock'), 15000);
   if (st && (st.rePhase === 'reentry' || st.rePhase === 'undock')) pass('reentry-undock', 'phase=' + st.rePhase);
@@ -455,6 +463,10 @@ async function placeBall(page, x, z, opts) {
   st = await waitFor(p, s => s.mode === 'pinball', 20000);
   if (st && st.mode === 'pinball') pass('reentry-returns-table', 'sub=' + st.sub + ' score=' + st.score);
   else fail('reentry-returns-table', JSON.stringify(st));
+  st = await waitFor(p, s => s.mode === 'pinball' && /pinball\.(ogg|mp3)/i.test(s.music || ''), 8000);
+  if (st && /pinball\.(ogg|mp3)/i.test(st.music || '')) {
+    pass('reentry-music-returns-pinball', 'src=' + st.music + ' paused=' + st.musicPaused + ' vol=' + st.musicVol);
+  } else fail('reentry-music-returns-pinball', JSON.stringify({ mode: st && st.mode, music: st && st.music, paused: st && st.musicPaused }));
 
   await snap(p, 'done');
   console.log('ERRORS', errs.length, errs.length ? '\n' + errs.join('\n') : '');

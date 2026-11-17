@@ -78,12 +78,17 @@ function pickSrc(base) {
   return ogg ? base + '.ogg' : base + '.mp3';
 }
 const ModeMusic = {
-  el: null, url: null, vol: 0,
+  el: null, url: null, vol: 0, outgoing: null, outVol: 0,
   set(base) {
     const src = pickSrc(base);
     if (src === this.url) { this.sync(); return; }
+    // Crossfade: keep the outgoing track playing while the new one fades in.
+    if (this.el) {
+      if (this.outgoing) { try { this.outgoing.pause(); } catch (e) {} }
+      this.outgoing = this.el;
+      this.outVol = this.vol;
+    }
     this.url = src;
-    if (this.el) { this.el.pause(); this.el = null; }
     const a = new Audio(); a.loop = true; a.preload = 'auto'; a.src = src; a.volume = 0; this.el = a; this.vol = 0;
     this.sync();
   },
@@ -99,6 +104,11 @@ const ModeMusic = {
       if (want && this.el.paused) this.sync();
       try { this.el.volume = this.vol; } catch (e) {}
       if (!want && this.vol <= 0 && !this.el.paused) this.el.pause();
+    }
+    if (this.outgoing) {
+      this.outVol = Math.max(0, this.outVol - dt * 0.8);
+      try { this.outgoing.volume = this.outVol; } catch (e) {}
+      if (this.outVol <= 0) { try { this.outgoing.pause(); } catch (e) {} this.outgoing = null; }
     }
   }
 };
@@ -1340,7 +1350,7 @@ function startReentry() {
   H.root.position.set(off.x, off.y, off.z);
   H.root.rotation.set(0, 0, 0);
   H.root.scale.setScalar(off.s);
-  ModeMusic.set('audio/pinball');
+  ModeMusic.set('audio/reentry');
   SFX.undock(); SFX.callout('RE-ENTRY');
   showMsg('RE-ENTRY', 'UNDOCKING  ·  HOLD THE CORRIDOR', 2.4);
 }
@@ -1976,5 +1986,5 @@ if (CAPTURE) {
 
 window.__dbg = {
   G, hero, ball, table, H, Snd, AP, camState, startGame, enterPortal, leavePortal, openRiftExit,
-  world, BOUNDS, keys, input, resetBallToPlunger, startMultiball, reentryW, get player() { return player; }, get titleArmed() { return titleArmed; },
+  world, BOUNDS, keys, input, resetBallToPlunger, startMultiball, reentryW, ModeMusic, get player() { return player; }, get titleArmed() { return titleArmed; },
 };
