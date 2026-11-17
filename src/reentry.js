@@ -219,6 +219,125 @@ function buildCapsule() {
   return { root, dock, clampL, clampR, hingeL, hingeR, plasma, plasmaMat, trail, chute, lines, shield };
 }
 
+
+function padDeckTex() {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 512;
+  const g = c.getContext('2d');
+  g.fillStyle = '#2a2d32';
+  g.fillRect(0, 0, 512, 512);
+  // deck plating, unbranded
+  g.strokeStyle = '#3a3e44';
+  g.lineWidth = 2;
+  for (let i = 0; i < 16; i++) { g.beginPath(); g.moveTo(0, i * 32); g.lineTo(512, i * 32); g.stroke(); }
+  for (let i = 0; i < 16; i++) { g.beginPath(); g.moveTo(i * 32, 0); g.lineTo(i * 32, 512); g.stroke(); }
+  // bullseye rings — generic, no logos or letters
+  const rings = [
+    [240, '#d8d8d4', 10],
+    [190, '#e07020', 12],
+    [130, '#d8d8d4', 10],
+    [70, '#e07020', 14],
+    [22, '#f4f4f0', 0],
+  ];
+  g.save();
+  g.translate(256, 256);
+  for (const [r, col, w] of rings) {
+    if (w === 0) { g.fillStyle = col; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fill(); }
+    else { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.stroke(); }
+  }
+  g.restore();
+  // safety edge
+  g.strokeStyle = '#e8e0c8';
+  g.lineWidth = 14;
+  g.strokeRect(8, 8, 496, 496);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function oceanTex() {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 512;
+  const g = c.getContext('2d');
+  const grd = g.createLinearGradient(0, 0, 512, 512);
+  grd.addColorStop(0, '#0a3a5a');
+  grd.addColorStop(0.5, '#0c4a6a');
+  grd.addColorStop(1, '#0a3050');
+  g.fillStyle = grd; g.fillRect(0, 0, 512, 512);
+  g.strokeStyle = 'rgba(180,220,255,0.08)';
+  g.lineWidth = 1;
+  for (let i = 0; i < 24; i++) {
+    g.beginPath();
+    g.moveTo(0, i * 22 + 4);
+    for (let x = 0; x <= 512; x += 16) g.lineTo(x, i * 22 + 4 + Math.sin(x * 0.04 + i) * 3);
+    g.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(8, 8);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function buildLandingField() {
+  const root = new THREE.Group();
+  root.name = 'landingField';
+  root.visible = false;
+
+  const ocean = new THREE.Mesh(
+    new THREE.PlaneGeometry(420, 420),
+    new THREE.MeshStandardMaterial({ map: oceanTex(), roughness: 0.35, metalness: 0.15, color: 0x8ab0c8 })
+  );
+  ocean.rotation.x = -Math.PI / 2; ocean.position.y = 0; root.add(ocean);
+
+  // Generic unbranded ocean drone-ship / barge
+  const barge = new THREE.Group();
+  barge.position.y = 0.16; root.add(barge);
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(22, 0.7, 18), std(0x3a3e44, { roughness: 0.7, metalness: 0.35 }));
+  hull.position.y = -0.1; barge.add(hull);
+  const sheer = new THREE.Mesh(new THREE.BoxGeometry(22.4, 0.18, 18.4), std(0xd8d2c0, { roughness: 0.5, metalness: 0.2 }));
+  sheer.position.y = 0.28; barge.add(sheer);
+  const deck = new THREE.Mesh(
+    new THREE.BoxGeometry(16.4, 0.12, 16.4),
+    new THREE.MeshStandardMaterial({ map: padDeckTex(), roughness: 0.55, metalness: 0.25 })
+  );
+  deck.position.y = 0.38; barge.add(deck);
+
+  // Corner posts / floodlights — no markings
+  const postMat = std(0x2a2c30, { metalness: 0.6, roughness: 0.35 });
+  for (const [x, z] of [[9.2, 7.4], [9.2, -7.4], [-9.2, 7.4], [-9.2, -7.4]]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.16, 2.2, 8), postMat);
+    post.position.set(x, 1.3, z); barge.add(post);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), glow(0xfff2c8, 1.4));
+    lamp.position.set(x, 2.45, z); barge.add(lamp);
+    const light = new THREE.PointLight(0xfff0d0, 0.7, 14, 2); light.position.set(x, 2.5, z); barge.add(light);
+  }
+  // Small unbranded equipment hut at the stern, just so it reads as a ship
+  const hut = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.6, 2.4), std(0x4a5058, { roughness: 0.6, metalness: 0.3 }));
+  hut.position.set(0, 1.15, 9.2); barge.add(hut);
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 3.4, 6), postMat);
+  mast.position.set(0, 2.9, 9.2); barge.add(mast);
+
+  // Vertical target beacon over the bullseye
+  const beaconMat = additive(0xff8a20, 0.55, { side: THREE.DoubleSide });
+  const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 22, 12, 1, true), beaconMat);
+  beacon.position.y = 11; root.add(beacon);
+  const diamond = new THREE.Mesh(new THREE.OctahedronGeometry(0.7, 0), glow(0xffc070, 2.2));
+  diamond.position.y = 22.4; root.add(diamond);
+  const halo = new THREE.Mesh(new THREE.RingGeometry(1.4, 2.1, 28), additive(0xff8a20, 0.7, { side: THREE.DoubleSide }));
+  halo.rotation.x = -Math.PI / 2; halo.position.y = 0.55; root.add(halo);
+
+  // Projected touchdown pip (follows the capsule's ground track)
+  const pip = new THREE.Mesh(new THREE.RingGeometry(0.7, 1.15, 24), additive(0x40e8ff, 0.85, { side: THREE.DoubleSide }));
+  pip.rotation.x = -Math.PI / 2; pip.position.y = 0.62; root.add(pip);
+
+  const fireball = new THREE.Mesh(new THREE.SphereGeometry(1.2, 16, 12), additive(0xff4a10, 0.0));
+  fireball.visible = false; root.add(fireball);
+
+  return { root, barge, beacon, diamond, halo, pip, fireball, ocean };
+}
+
 export function buildReentryWorld() {
   const group = new THREE.Group();
   group.visible = false;
@@ -293,6 +412,18 @@ export function buildReentryWorld() {
   craft.add(cap.root);
   group.add(craft);
 
+  // Landing RCS jets (under the heat shield) — lit while thrusting
+  const jetMat = additive(0xffc080, 0.0);
+  const jets = [];
+  for (const [x, y] of [[0.45, 0.35], [-0.45, 0.35], [0.45, -0.35], [-0.45, -0.35]]) {
+    const j = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.7, 8, 1, true), jetMat.clone());
+    j.rotation.x = Math.PI; j.position.set(x, y, 0.15); cap.root.add(j);
+    jets.push(j);
+  }
+
+  const landing = buildLandingField();
+  group.add(landing.root);
+
   // Splash ring
   const splash = new THREE.Mesh(
     new THREE.RingGeometry(0.4, 6, 32),
@@ -333,6 +464,8 @@ export function buildReentryWorld() {
     bonus: 0,
     panelsFold: 0,
     chute: 0,
+    lx: 0, lz: 0, vx: 0, vz: 0, vy: 0,
+    dist: 0, hSpeed: 0, vSpeed: 0, grade: '',
   };
 
   function reset() {
@@ -340,6 +473,7 @@ export function buildReentryWorld() {
       phase: 'dock', t: 0, alt: 110, speed: 78, pitch: -1.2, bank: 0, yaw: 0,
       heat: 0, hull: 100, shield: 1, shieldT: 0, skipT: 0, endT: 0,
       inCorridor: false, success: false, reason: '', bonus: 0, panelsFold: 0, chute: 0,
+      lx: 0, lz: 0, vx: 0, vz: 0, vy: 0, dist: 0, hSpeed: 0, vSpeed: 0, grade: '',
     });
     cap.chute.visible = false; cap.lines.visible = false; cap.chute.scale.setScalar(0.01);
     cap.hingeL.rotation.z = 0; cap.hingeR.rotation.z = 0;
@@ -347,6 +481,10 @@ export function buildReentryWorld() {
     for (const d of debris) d.m.visible = false;
     cap.root.visible = true;
     cap.plasmaMat.uniforms.heat.value = 0;
+    landing.root.visible = false;
+    landing.fireball.visible = false;
+    landing.fireball.material.opacity = 0;
+    for (const j of jets) j.material.opacity = 0;
   }
 
   function density(alt) {
@@ -368,20 +506,14 @@ export function buildReentryWorld() {
       if (f.t > 2.6) { f.phase = 'reentry'; f.t = 0; return { event: 'reentry' }; }
       return null;
     }
-    if (f.phase === 'chute' || f.phase === 'splash' || f.phase === 'breakup' || f.phase === 'skip') {
+    if (f.phase === 'descent') return stepDescent(dt, input);
+
+    if (f.phase === 'splash' || f.phase === 'breakup' || f.phase === 'skip' || f.phase === 'touchdown' || f.phase === 'hardland' || f.phase === 'miss') {
       f.endT += dt;
-      if (f.phase === 'chute') {
-        f.chute = clamp(f.chute + dt * 1.4, 0, 1);
-        f.speed = damp(f.speed, 6, 1.6, dt);
-        f.alt = Math.max(0, f.alt - f.speed * 0.08 * dt);
-        f.heat = Math.max(0, f.heat - dt * 28);
-        if (f.alt <= 0.35 || f.endT > 3.2) {
-          f.phase = 'splash'; f.endT = 0; f.alt = 0; f.success = true;
-          f.bonus = 8000 + Math.floor(f.hull * 40) + Math.floor((1 - Math.min(1, f.heat / 100)) * 2000);
-          return { event: 'splash' };
-        }
-      }
-      if (f.phase === 'splash' && f.endT > 2.2) return { leave: true, success: true, bonus: f.bonus, reason: 'splash' };
+      if (f.phase === 'touchdown' && f.endT > 2.4) return { leave: true, success: true, bonus: f.bonus, reason: 'touchdown' };
+      if (f.phase === 'hardland' && f.endT > 2.5) return { leave: true, success: false, bonus: 0, reason: 'hardland' };
+      if (f.phase === 'miss' && f.endT > 2.5) return { leave: true, success: false, bonus: 0, reason: 'miss' };
+      if (f.phase === 'splash' && f.endT > 2.2) return { leave: true, success: false, bonus: 0, reason: 'splash' };
       if ((f.phase === 'breakup' || f.phase === 'skip') && f.endT > 2.6) {
         return { leave: true, success: false, bonus: 0, reason: f.reason };
       }
@@ -461,9 +593,8 @@ export function buildReentryWorld() {
     }
 
     if (f.alt <= 7.5 && f.speed < 26 && f.heat < 88 && f.hull > 0) {
-      f.phase = 'chute'; f.endT = 0; f.chute = 0; f.success = true;
-      cap.chute.visible = true; cap.lines.visible = true;
-      return { event: 'chute' };
+      beginDescent();
+      return { event: 'descent' };
     }
     if (f.alt <= 0.2 && f.phase === 'reentry') {
       // Hit the surface still too fast / hot — breakup.
@@ -474,10 +605,152 @@ export function buildReentryWorld() {
     return null;
   }
 
+  const PAD_R = 8.2;
+  const SOFT_V = 5.15;
+  const VERY_SOFT = 3.0;
+
+  function beginDescent() {
+    const f = flight;
+    f.phase = 'descent'; f.t = 0; f.endT = 0; f.success = false; f.reason = ''; f.grade = '';
+    f.chute = 0; f.heat = Math.max(0, f.heat * 0.35);
+    f.alt = 52;
+    f.lx = 15; f.lz = 11;
+    f.vx = -1.1; f.vz = -0.7;
+    f.vy = 6.6;
+    f.dist = Math.hypot(f.lx, f.lz);
+    f.hSpeed = Math.hypot(f.vx, f.vz);
+    f.vSpeed = f.vy;
+    f.pitch = 0; f.bank = 0; f.yaw = 0;
+    cap.chute.visible = true; cap.lines.visible = true;
+    landing.root.visible = true;
+    landing.fireball.visible = false;
+    cap.root.visible = true;
+    splash.visible = false;
+  }
+
+  function stepDescent(dt, input) {
+    const f = flight;
+    f.t += dt;
+    f.chute = clamp(f.chute + dt * 1.5, 0, 1);
+    f.heat = Math.max(0, f.heat - dt * 18);
+    const tx = input ? clamp(input.bank || 0, -1, 1) : 0;
+    const tz = input ? clamp(-(input.pitch || 0), -1, 1) : 0; // W (pitch +) thrusts toward -Z
+    const brake = !!(input && input.shield);
+    // Lateral RCS — snappy enough to close a ~18 m offset in the time you have.
+    f.vx += tx * 13.5 * dt;
+    f.vz += tz * 13.5 * dt;
+    const h = Math.hypot(f.vx, f.vz);
+    if (h > 14) { f.vx *= 14 / h; f.vz *= 14 / h; }
+    const hDrag = 1.6 + (brake ? 1.2 : 0);
+    f.vx *= Math.max(0, 1 - hDrag * dt);
+    f.vz *= Math.max(0, 1 - hDrag * dt);
+    // Vertical: chute has a slightly-hot terminal; hold shield / space to bleed speed for a soft touchdown.
+    f.vy += 3.4 * dt;
+    f.vy -= f.vy * 0.52 * dt;
+    if (brake) f.vy = Math.max(0.6, f.vy - 9.5 * dt);
+    f.vy = clamp(f.vy, 0.4, 16);
+    f.lx += f.vx * dt;
+    f.lz += f.vz * dt;
+    f.alt -= f.vy * dt;
+    f.dist = Math.hypot(f.lx, f.lz);
+    f.hSpeed = Math.hypot(f.vx, f.vz);
+    f.vSpeed = f.vy;
+    f.speed = Math.hypot(f.hSpeed, f.vSpeed);
+    if (f.alt <= 0.35) return resolveLanding();
+    return null;
+  }
+
+  function resolveLanding() {
+    const f = flight;
+    f.alt = 0;
+    f.endT = 0;
+    const dist = f.dist;
+    const onPad = dist <= PAD_R;
+    const soft = f.vy <= SOFT_V;
+    if (!onPad) {
+      f.phase = 'miss'; f.success = false; f.reason = 'miss'; f.bonus = 0; f.grade = 'MISSED';
+      splash.visible = true; splash.position.set(f.lx, 0.15, f.lz);
+      return { event: 'miss', dist, vy: f.vy };
+    }
+    if (!soft) {
+      f.phase = 'hardland'; f.success = false; f.reason = 'hardland'; f.bonus = 0; f.grade = 'HARD LANDING';
+      cap.root.visible = false;
+      landing.fireball.visible = true;
+      landing.fireball.position.set(f.lx, 1.1, f.lz);
+      landing.fireball.material.opacity = 0.95;
+      for (const d of debris) {
+        d.m.visible = true;
+        d.m.position.set(f.lx + (Math.random() - 0.5) * 1.4, 1 + Math.random(), f.lz + (Math.random() - 0.5) * 1.4);
+        d.v.set((Math.random() - 0.5) * 10, 3 + Math.random() * 8, (Math.random() - 0.5) * 10);
+        d.spin.set(Math.random() * 8, Math.random() * 8, Math.random() * 8);
+      }
+      return { event: 'hardland', dist, vy: f.vy };
+    }
+    const acc = clamp(1 - dist / PAD_R, 0, 1);
+    const very = f.vy <= VERY_SOFT;
+    f.phase = 'touchdown'; f.success = true; f.reason = 'touchdown';
+    f.grade = dist <= 1.6 ? 'BULLSEYE' : dist <= 3.6 ? 'CENTER DECK' : 'ON DECK';
+    f.bonus = 5000 + Math.round(acc * 10000) + (very ? 4000 : 1500) + Math.floor(Math.max(0, f.hull) * 20);
+    f.vx = 0; f.vz = 0; f.vy = 0;
+    return { event: 'touchdown', dist, vy: f.vSpeed, bonus: f.bonus, grade: f.grade };
+  }
+
   function layoutCraft() {
     const f = flight;
+    const landingPhase = f.phase === 'descent' || f.phase === 'touchdown' || f.phase === 'hardland' || f.phase === 'miss';
+    cap.hingeL.rotation.z = lerp(0, 1.25, f.panelsFold);
+    cap.hingeR.rotation.z = lerp(0, -1.25, f.panelsFold);
+    cap.plasmaMat.uniforms.time.value = f.t + (flight._clock || 0);
+
+    if (landingPhase) {
+      landing.root.visible = true;
+      rushGroup.visible = false;
+      // Park the globe on the horizon so the ocean pad can take the stage.
+      earth.position.set(0, -earthR * 0.85, 210);
+      atmo.position.copy(earth.position);
+      clouds.position.copy(earth.position);
+      const deckY = 0.7;
+      const cy = (f.phase === 'miss' ? -0.4 : deckY) + Math.max(0, f.alt);
+      craft.position.set(f.lx, cy, f.lz);
+      const tiltX = clamp(f.vz * 0.03, -0.35, 0.35);
+      const tiltZ = clamp(-f.vx * 0.03, -0.35, 0.35);
+      if (f.phase === 'touchdown') craft.rotation.set(0, 0, 0);
+      else if (f.phase === 'miss') craft.rotation.set(0.4, f.t * 0.4, 0.2);
+      else craft.rotation.set(tiltX, 0, tiltZ);
+      cap.plasmaMat.uniforms.heat.value = 0;
+      cap.chute.scale.setScalar(0.01 + f.chute * 0.99);
+      cap.chute.visible = f.phase === 'descent' || f.phase === 'touchdown';
+      cap.lines.visible = cap.chute.visible;
+      cap.chute.position.z = 5.5 + f.chute * 1.2;
+      cap.chute.rotation.x = Math.PI / 2;
+      landing.pip.position.set(f.lx, 0.62, f.lz);
+      landing.diamond.rotation.y += 0.015;
+      landing.halo.scale.setScalar(1 + Math.sin((flight._clock || 0) * 3) * 0.08);
+      landing.barge.position.y = 0.16 + Math.sin((flight._clock || 0) * 0.7) * 0.04;
+      const thrusting = f.phase === 'descent' && (Math.abs(f.vx) > 0.4 || Math.abs(f.vz) > 0.4);
+      for (const j of jets) j.material.opacity = thrusting ? 0.7 : (f.phase === 'descent' ? 0.12 : 0);
+      if (f.phase === 'hardland' && landing.fireball.visible) {
+        landing.fireball.scale.setScalar(1 + f.endT * 3.5);
+        landing.fireball.material.opacity = Math.max(0, 0.95 - f.endT * 0.4);
+        for (const d of debris) {
+          d.m.position.addScaledVector(d.v, 1 / 60);
+          d.v.y -= 10 / 60;
+          d.m.rotation.x += d.spin.x / 60; d.m.rotation.z += d.spin.z / 60;
+        }
+      }
+      if (f.phase === 'miss' && splash.visible) {
+        splash.position.set(f.lx, 0.2, f.lz);
+        splash.scale.setScalar(0.5 + f.endT * 4);
+        splash.material.opacity = Math.max(0, 0.75 - f.endT * 0.28);
+      }
+      rim.position.set(f.lx, cy + 1, f.lz);
+      rim.intensity = f.phase === 'hardland' ? 8 : 0.4;
+      return;
+    }
+
+    landing.root.visible = false;
+    rushGroup.visible = true;
     const hover = earthR + 6 + f.alt * 0.85;
-    // Earth sits ahead and below so the horizon fills the view.
     earth.position.set(0, -earthR * 0.15, hover);
     atmo.position.copy(earth.position);
     clouds.position.copy(earth.position);
@@ -485,31 +758,19 @@ export function buildReentryWorld() {
     clouds.rotation.y = earth.rotation.y * 1.15;
 
     craft.position.set(f.bank * 0.04, Math.sin(f.t * 0.7) * 0.08, 0);
-    // Heat shield points along the velocity vector (forward / toward the planet).
     const att = -f.pitch * DEG * 0.35 + 0.55;
     craft.rotation.set(att, f.yaw, -f.bank * DEG);
-    cap.hingeL.rotation.z = lerp(0, 1.25, f.panelsFold);
-    cap.hingeR.rotation.z = lerp(0, -1.25, f.panelsFold);
     const heatN = f.heat / 100;
-    cap.plasmaMat.uniforms.heat.value = (f.phase === 'reentry' || f.phase === 'chute') ? heatN : (f.phase === 'undock' ? 0.05 : 0);
-    cap.plasmaMat.uniforms.time.value = f.t + (flight._clock || 0);
+    cap.plasmaMat.uniforms.heat.value = f.phase === 'reentry' ? heatN : (f.phase === 'undock' ? 0.05 : 0);
     rim.position.copy(craft.position); rim.position.z -= 2;
     rim.intensity = heatN * 6;
     rim.color.setHSL(0.06 - heatN * 0.04, 0.95, 0.55);
+    for (const j of jets) j.material.opacity = 0;
 
     cap.chute.scale.setScalar(0.01 + f.chute * 0.99);
-    cap.chute.visible = f.chute > 0.02 || f.phase === 'chute' || f.phase === 'splash';
+    cap.chute.visible = f.chute > 0.02;
     cap.lines.visible = cap.chute.visible;
     cap.chute.position.z = 5.5 + f.chute * 1.2;
-
-    if (f.phase === 'splash') {
-      splash.visible = true;
-      splash.position.copy(craft.position);
-      splash.position.y -= 1.2;
-      const s = 0.4 + f.endT * 3.5;
-      splash.scale.setScalar(s);
-      splash.material.opacity = Math.max(0, 0.7 - f.endT * 0.28);
-    }
 
     const rush = f.phase === 'reentry' && f.alt < 42 ? clamp((42 - f.alt) / 30, 0, 1) * (f.speed / 50) : 0;
     for (const r of rushMats) {
@@ -525,9 +786,19 @@ export function buildReentryWorld() {
     if (f.phase === 'dock') { back = 9; up = 2.8; lookZ = -1; lookY = 0.2; }
     if (f.phase === 'undock') { back = 8.2; up = 2.5; }
     if (f.phase === 'reentry') { back = 6.6 + f.heat * 0.01; up = 2.1; lookY = -1.1; }
-    if (f.phase === 'chute' || f.phase === 'splash') { back = 10; up = 4; lookY = -0.4; }
     if (f.phase === 'breakup') { back = 11; up = 3; }
     if (f.phase === 'skip') { back = 9; up = 3.5; lookY = 0.8; }
+    const landingPhase = f.phase === 'descent' || f.phase === 'touchdown' || f.phase === 'hardland' || f.phase === 'miss';
+    if (landingPhase) {
+      const cy = Math.max(0, f.alt) + 0.7;
+      const backX = f.lx * 0.25;
+      const backZ = f.lz * 0.25 + 16 + Math.max(0, f.alt) * 0.15;
+      camera.position.set(backX, Math.max(8, cy + 7), backZ);
+      camera.up.set(0, 1, 0);
+      camera.lookAt(f.lx * 0.55, 0.4, f.lz * 0.55);
+      if (shake) shake.set(0, 0, 0);
+      return;
+    }
     const hs = (f.heat / 100) * (f.phase === 'reentry' ? 1 : 0.2);
     const sx = (Math.random() - 0.5) * hs * 0.35;
     const sy = (Math.random() - 0.5) * hs * 0.35;
@@ -564,5 +835,6 @@ export function buildReentryWorld() {
     },
     applyCamera,
     rowlexOffset,
+    PAD_R: 8.2,
   };
 }

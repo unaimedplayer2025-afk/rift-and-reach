@@ -70,6 +70,12 @@ async function state(page) {
       reHull: d.reentryW && d.reentryW.flight ? +d.reentryW.flight.hull.toFixed(1) : null,
       reSpeed: d.reentryW && d.reentryW.flight ? +d.reentryW.flight.speed.toFixed(1) : null,
       reCorr: d.reentryW && d.reentryW.flight ? !!d.reentryW.flight.inCorridor : null,
+      reLx: d.reentryW && d.reentryW.flight ? +((d.reentryW.flight.lx || 0).toFixed(2)) : null,
+      reLz: d.reentryW && d.reentryW.flight ? +((d.reentryW.flight.lz || 0).toFixed(2)) : null,
+      reDist: d.reentryW && d.reentryW.flight ? +((d.reentryW.flight.dist || 0).toFixed(2)) : null,
+      reH: d.reentryW && d.reentryW.flight ? +((d.reentryW.flight.hSpeed || 0).toFixed(2)) : null,
+      reV: d.reentryW && d.reentryW.flight ? +((d.reentryW.flight.vSpeed || 0).toFixed(2)) : null,
+      reGrade: d.reentryW && d.reentryW.flight ? (d.reentryW.flight.grade || '') : '',
       keyS: !!(d.keys && d.keys.KeyS), keyW: !!(d.keys && d.keys.KeyW),
     };
   });
@@ -381,10 +387,10 @@ async function placeBall(page, x, z, opts) {
 
     // Fly the corridor with real keys long enough for heat to build and altitude to drop.
     const tFly = Date.now();
-    while (Date.now() - tFly < 25000) {
+    while (Date.now() - tFly < 28000) {
       const s = await state(p);
       if (s.mode !== 'reentry') break;
-      if (s.rePhase === 'chute' || s.rePhase === 'splash' || s.rePhase === 'breakup' || s.rePhase === 'skip') break;
+      if (s.rePhase === 'descent' || s.rePhase === 'touchdown' || s.rePhase === 'hardland' || s.rePhase === 'miss' || s.rePhase === 'breakup' || s.rePhase === 'skip') break;
       await p.keyboard.up('KeyW'); await p.keyboard.up('KeyS'); await p.keyboard.up('ShiftLeft');
       if (s.rePitch > -9) await p.keyboard.down('KeyS');
       else if (s.rePitch < -13.5) await p.keyboard.down('KeyW');
@@ -397,10 +403,54 @@ async function placeBall(page, x, z, opts) {
       pass('reentry-heats-or-descends', `alt ${a0} -> ${st.reAlt} heat=${st.reHeat} phase=${st.rePhase}`);
     } else fail('reentry-heats-or-descends', JSON.stringify({ a0, st }));
   }
+
+  // Final descent: real thruster input onto the drone-ship pad.
+  st = await waitFor(p, s => s.mode !== 'reentry' || s.rePhase === 'descent' || s.rePhase === 'touchdown' || s.rePhase === 'hardland' || s.rePhase === 'miss' || s.rePhase === 'breakup' || s.rePhase === 'skip', 20000);
+  if (st && st.mode === 'reentry' && st.rePhase === 'descent') {
+    pass('reentry-descent', `dist=${st.reDist} alt=${st.reAlt} v=${st.reV}`);
+    const x0 = st.reLx, z0 = st.reLz;
+    await p.keyboard.down('KeyA');
+    st = await waitFor(p, s => s.mode === 'reentry' && s.rePhase === 'descent' && s.reLx < x0 - 1.5, 6000);
+    await p.keyboard.up('KeyA');
+    if (st && st.reLx < x0 - 1.5) pass('reentry-steers-pad', `lx ${x0} -> ${st.reLx} lz ${z0} -> ${st.reLz}`);
+    else fail('reentry-steers-pad', JSON.stringify({ x0, z0, st }));
+
+    const tLand = Date.now();
+    while (Date.now() - tLand < 25000) {
+      const s = await state(p);
+      if (s.mode !== 'reentry') break;
+      if (s.rePhase === 'touchdown' || s.rePhase === 'hardland' || s.rePhase === 'miss') break;
+      await p.keyboard.up('KeyW'); await p.keyboard.up('KeyS'); await p.keyboard.up('KeyA'); await p.keyboard.up('KeyD'); await p.keyboard.up('ShiftLeft');
+      if (s.reLx > 0.5) await p.keyboard.down('KeyA');
+      else if (s.reLx < -0.5) await p.keyboard.down('KeyD');
+      if (s.reLz > 0.5) await p.keyboard.down('KeyW');
+      else if (s.reLz < -0.5) await p.keyboard.down('KeyS');
+      if (s.reV > 4.0 || (s.reAlt != null && s.reAlt < 10 && s.reV > 2.6)) await p.keyboard.down('ShiftLeft');
+      await p.waitForTimeout(120);
+    }
+    await p.keyboard.up('KeyW'); await p.keyboard.up('KeyS'); await p.keyboard.up('KeyA'); await p.keyboard.up('KeyD'); await p.keyboard.up('ShiftLeft');
+    st = await waitFor(p, s => s.mode !== 'reentry' || s.rePhase === 'touchdown' || s.rePhase === 'hardland' || s.rePhase === 'miss' || s.mode === 'pinball', 8000);
+    if (st && (st.rePhase === 'touchdown' || (st.mode === 'pinball' && st.score > 0))) {
+      pass('reentry-lands-on-pad', `phase=${st.rePhase} dist=${st.reDist} v=${st.reV} grade=${st.reGrade} score=${st.score}`);
+    } else fail('reentry-lands-on-pad', JSON.stringify(st));
+  } else if (st && st.rePhase === 'touchdown') {
+    pass('reentry-descent', 'already down');
+    pass('reentry-steers-pad', 'already down');
+    pass('reentry-lands-on-pad', `phase=${st.rePhase} dist=${st.reDist} grade=${st.reGrade}`);
+  } else {
+    fail('reentry-descent', JSON.stringify(st));
+  }
   await snap(p, 'reentry');
 
   if ((await state(p)).mode === 'reentry') {
-    await p.evaluate(() => window.__dbg.leavePortal(true, 4000));
+    await p.evaluate(() => {
+      const f = window.__dbg.reentryW && window.__dbg.reentryW.flight;
+      if (f && (f.phase === 'touchdown' || f.phase === 'hardland' || f.phase === 'miss' || f.phase === 'breakup' || f.phase === 'skip')) {
+        window.__dbg.leavePortal(!!f.success, f.bonus || 0);
+      } else {
+        window.__dbg.leavePortal(true, 4000);
+      }
+    });
   }
   st = await waitFor(p, s => s.mode === 'pinball', 20000);
   if (st && st.mode === 'pinball') pass('reentry-returns-table', 'sub=' + st.sub + ' score=' + st.score);

@@ -1366,8 +1366,16 @@ function updateReentry(dt) {
   if (ev && ev.event === 'undock') { SFX.undock(); showMsg('UNDOCK', 'ARRAYS FOLDING', 1.4); }
   if (ev && ev.event === 'reentry') { SFX.reentry(); showMsg('INTERFACE', 'W / S PITCH  ·  SHIFT SHIELD', 2.2); }
   if (ev && ev.event === 'shield') SFX.shield();
-  if (ev && ev.event === 'chute') { SFX.chute(); showMsg('CHUTES', 'ON THE DECK', 1.8); dmdSay('CHUTES', '', 1.8); }
-  if (ev && ev.event === 'splash') { SFX.splash(); SFX.callout('SPLASHDOWN'); showMsg('SPLASHDOWN', '+' + ev.bonus, 2.2); flash(0.35); }
+  if (ev && ev.event === 'chute') { SFX.chute(); showMsg('CHUTES', 'STEER TO THE PAD', 1.8); dmdSay('CHUTES', '', 1.8); }
+  if (ev && ev.event === 'descent') { SFX.chute(); showMsg('FINAL DESCENT', 'WASD THRUST  ·  SHIFT BRAKE', 2.2); dmdSay('STEER TO PAD', '', 2.2); }
+  if (ev && ev.event === 'touchdown') {
+    SFX.touchdown(); SFX.callout(ev.grade || 'ON DECK');
+    showMsg(ev.grade || 'ON DECK', '+' + ev.bonus + '  ·  ' + (ev.dist != null ? ev.dist.toFixed(1) + 'm' : ''), 2.4);
+    dmdSay(ev.grade || 'ON DECK', '+' + ev.bonus, 2.2); flash(0.3);
+  }
+  if (ev && ev.event === 'hardland') { SFX.hardland(); SFX.callout('HARD LANDING'); showMsg('HARD LANDING', 'TOO FAST', 2.2); flash(0.5); G.shake = 0.8; }
+  if (ev && ev.event === 'miss') { SFX.miss(); SFX.callout('MISSED'); showMsg('MISSED THE PAD', 'SPLASH', 2.2); flash(0.25); }
+  if (ev && ev.event === 'splash') { SFX.splash(); showMsg('SPLASH', '', 2.0); }
   if (ev && ev.event === 'breakup') { SFX.breakup(); SFX.callout('BREAKUP'); showMsg('BREAKUP', 'HULL LOST', 2.2); flash(0.5); G.shake = 0.8; }
   if (ev && ev.event === 'skip') { SFX.skip(); SFX.callout('SKIPPED'); showMsg('SKIPPED', 'TOO SHALLOW', 2.2); }
   if (ev && ev.leave && !G._reentryDone) {
@@ -1461,12 +1469,23 @@ function updateCamera(dt) {
   if (G.mode === 'reentry') {
     const f = reentryW.flight;
     $('modeTag').textContent = 'RE-ENTRY';
-    $('modeSub').textContent = f.phase === 'dock' ? 'IN ORBIT' : f.phase === 'undock' ? 'UNDOCKING' : f.phase === 'chute' ? 'CHUTES' : f.phase === 'splash' ? 'SPLASHDOWN' : f.phase === 'breakup' ? 'BREAKUP' : f.phase === 'skip' ? 'SKIPPED' : 'INTERFACE';
-    $('objText').textContent = 'ALT ' + f.alt.toFixed(0) + '  ·  PITCH ' + f.pitch.toFixed(1) + '°  ·  HOLD ' + (-14) + ' TO ' + (-7) + '°';
+    const landing = f.phase === 'descent' || f.phase === 'touchdown' || f.phase === 'hardland' || f.phase === 'miss';
+    $('modeSub').textContent = f.phase === 'dock' ? 'IN ORBIT' : f.phase === 'undock' ? 'UNDOCKING' : f.phase === 'descent' ? 'FINAL DESCENT' : f.phase === 'touchdown' ? (f.grade || 'TOUCHDOWN') : f.phase === 'hardland' ? 'HARD LANDING' : f.phase === 'miss' ? 'MISSED' : f.phase === 'breakup' ? 'BREAKUP' : f.phase === 'skip' ? 'SKIPPED' : 'INTERFACE';
+    if (landing) {
+      $('objText').textContent = 'PAD  ' + (f.dist || 0).toFixed(1) + 'm  ·  H ' + (f.hSpeed || 0).toFixed(1) + '  ·  V ' + (f.vSpeed || 0).toFixed(1);
+      if ($('corr')) {
+        const ok = (f.dist || 99) <= 8.2 && (f.vSpeed || 99) <= 5.15;
+        $('corr').textContent = 'TARGET  ' + (f.dist || 0).toFixed(1) + 'm  ·  V ' + (f.vSpeed || 0).toFixed(1);
+        $('corr').className = ok ? 'ok' : 'bad';
+      }
+      $('speedo').innerHTML = Math.round((f.vSpeed || 0) * 10) / 10 + ' <span>V SPD</span>';
+    } else {
+      $('objText').textContent = 'ALT ' + f.alt.toFixed(0) + '  ·  PITCH ' + f.pitch.toFixed(1) + '°  ·  HOLD ' + (-14) + ' TO ' + (-7) + '°';
+      if ($('corr')) { $('corr').textContent = f.inCorridor ? 'CORRIDOR  LOCK' : (f.pitch < -14.5 ? 'TOO STEEP' : 'TOO SHALLOW'); $('corr').className = f.inCorridor ? 'ok' : 'bad'; }
+      $('speedo').innerHTML = Math.round(f.speed) + ' <span>KM/S ×10</span>';
+    }
     if ($('heat')) $('heat').style.width = (f.heat).toFixed(0) + '%';
     if ($('hull')) $('hull').style.width = Math.max(0, f.hull).toFixed(0) + '%';
-    if ($('corr')) { $('corr').textContent = f.inCorridor ? 'CORRIDOR  LOCK' : (f.pitch < -14.5 ? 'TOO STEEP' : 'TOO SHALLOW'); $('corr').className = f.inCorridor ? 'ok' : 'bad'; }
-    $('speedo').innerHTML = Math.round(f.speed) + ' <span>KM/S ×10</span>';
   }
   if (G.mode === 'reach' && player) {
     const back = tmpV.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
@@ -1678,12 +1697,21 @@ const AP = {
   },
   reentry(dt) {
     const f = reentryW.flight;
-    if (f.phase !== 'reentry') return;
-    const mid = -10.6;
-    keys.KeyS = keys.KeyW = false;
-    if (f.pitch > mid + 0.5) keys.KeyS = true;      // too shallow — pitch down
-    else if (f.pitch < mid - 0.5) keys.KeyW = true; // too steep — pitch up
-    keys.ShiftLeft = f.heat > 62 && f.shield > 0.3 && f.shieldT <= 0;
+    keys.KeyS = keys.KeyW = keys.KeyA = keys.KeyD = keys.ShiftLeft = false;
+    if (f.phase === 'reentry') {
+      const mid = -10.6;
+      if (f.pitch > mid + 0.5) keys.KeyS = true;
+      else if (f.pitch < mid - 0.5) keys.KeyW = true;
+      keys.ShiftLeft = f.heat > 62 && f.shield > 0.3 && f.shieldT <= 0;
+      return;
+    }
+    if (f.phase === 'descent') {
+      if (f.lx > 0.6) keys.KeyA = true;
+      else if (f.lx < -0.6) keys.KeyD = true;
+      if (f.lz > 0.6) keys.KeyW = true;   // W thrusts -Z toward a +Z offset
+      else if (f.lz < -0.6) keys.KeyS = true;
+      keys.ShiftLeft = f.vy > 4.2 || (f.alt < 8 && f.vy > 2.8);
+    }
   },
   pinball(dt) {
     if (G.sub === 'curl' || G.sub === 'toLane') return;

@@ -113,6 +113,9 @@ export const SFX = {
   splash()   { Snd.noise(0.35, 0.16, 400, 'lowpass'); Snd.tone(140, 0.35, 'sine', 0.08, 40); Snd.tone(220, 0.2, 'sine', 0.05, 0, 0.15); },
   breakup()  { Snd.noise(0.7, 0.28, 200, 'lowpass'); Snd.tone(80, 0.7, 'sawtooth', 0.16, 30); Snd.tone(40, 0.5, 'sine', 0.12); },
   skip()     { Snd.tone(200, 0.4, 'sine', 0.08, 80); Snd.noise(0.3, 0.1, 800, 'bandpass', 200); },
+  touchdown(){ [392, 523, 659, 784].forEach((f, i) => Snd.tone(f, 0.18, 'square', 0.08, 0, i * 0.08)); Snd.noise(0.15, 0.1, 400, 'lowpass'); },
+  hardland() { Snd.noise(0.55, 0.28, 180, 'lowpass'); Snd.tone(70, 0.5, 'sawtooth', 0.14, 25); },
+  miss()     { Snd.noise(0.4, 0.18, 350, 'lowpass'); Snd.tone(160, 0.3, 'sine', 0.07, 50); },
   callout(name) {
     // Simple voice-like formant blips — short announced phrases.
     const map = {
@@ -131,6 +134,11 @@ export const SFX = {
       SPLASHDOWN: [200, 260, 320, 260],
       BREAKUP: [80, 60, 40],
       SKIPPED: [220, 180, 140],
+      BULLSEYE: [300, 380, 460, 520],
+      'ON DECK': [240, 300, 360],
+      'CENTER DECK': [240, 300, 380],
+      'HARD LANDING': [80, 60, 40],
+      MISSED: [160, 120, 90],
     };
     const seq = map[name] || [200, 250, 180];
     seq.forEach((f, i) => {
