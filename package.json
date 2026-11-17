@@ -1,9 +1,11 @@
 {
   "name": "rift-reach",
   "version": "1.0.0",
-  "description": "THE RIFT & THE REACH — a 3D pinball portal game starring Rowlex",
+  "description": "THE RIFT & THE REACH \u2014 a 3D pinball portal game starring Rowlex",
   "scripts": {
-    "start": "python3 -m http.server 8767"
+    "start": "python3 -m http.server 8767",
+    "play-tests": "node tools/play-tests.js",
+    "check": "node tools/check.js"
   },
   "license": "ISC"
 }

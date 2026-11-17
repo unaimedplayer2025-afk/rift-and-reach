@@ -214,18 +214,24 @@ export function buildTable() {
     [-6.2, 0.45, 8.2], [-6.2, 0.45, 2], [-6.3, 0.5, -4], [-6.0, 0.55, -10],
     [-5.2, 0.6, -14.2], [-3.2, 0.65, -15.8], [0, 0.7, -16.4]
   ];
-  const rightRail = [
-    [5.25, 0.45, 8.2], [5.25, 0.45, 2], [5.3, 0.5, -4], [5.1, 0.55, -10],
-    [4.4, 0.6, -14.2], [2.6, 0.65, -15.8], [0, 0.7, -16.4]
+  // lower-right playfield rail joins the plunger-lane divider (closes the tight corridor)
+  const rightLower = [
+    [5.25, 0.45, 8.2], [5.25, 0.45, 2], [5.70, 0.45, -2]
+  ];
+  // upper-right playfield — starts left of the lane exit so the ball can roll out
+  const rightUpper = [
+    [3.9, 0.55, -12.4], [4.4, 0.6, -14.2], [2.6, 0.65, -15.8], [0, 0.7, -16.4]
   ];
   tube(leftRail, 0.11, glassA, 48);
-  tube(rightRail, 0.11, glassA, 48);
+  tube(rightLower, 0.11, glassA, 24);
+  tube(rightUpper, 0.11, glassA, 32);
   glowTube(leftRail, 0.16, additive(0x40e8ff, 0.28), 32);
-  glowTube(rightRail, 0.16, additive(0x40e8ff, 0.28), 32);
+  glowTube(rightLower, 0.16, additive(0x40e8ff, 0.28), 18);
+  glowTube(rightUpper, 0.16, additive(0x40e8ff, 0.28), 24);
 
-  // plunger lane glass
-  tube([[6.0, 0.4, 8.4], [6.0, 0.4, -2], [6.05, 0.45, -8], [5.6, 0.5, -11.5], [4.6, 0.55, -13.5]], 0.09, glassB, 28);
-  tube([[6.9, 0.4, 8.4], [6.9, 0.4, -2], [6.7, 0.45, -8], [6.0, 0.5, -12]], 0.09, glassB, 24);
+  // plunger lane glass — divider ends as a one-way tip; right wall guides up and slightly in
+  tube([[6.0, 0.4, 8.4], [6.0, 0.4, -2], [6.0, 0.45, -8.6]], 0.09, glassB, 24);
+  tube([[7.15, 0.4, 8.4], [7.15, 0.4, -2], [7.05, 0.45, -7], [6.85, 0.5, -9.2]], 0.09, glassB, 24);
 
   // LEFT holographic ramp — a soaring glass arc toward the rift diorama
   const rampL = [
@@ -498,14 +504,14 @@ export function buildTable() {
   flipL.rotation.y = FLIP_REST_L; flipR.rotation.y = -FLIP_REST_R;
 
   // ---------- CHROME PLUNGER (right lane) + dramatic foreground housing
-  const plungerGrp = grp(cab, 6.45, 0.25, 8.05);
+  const plungerGrp = grp(cab, 6.57, 0.25, 8.05);
   const plungerRod = part(plungerGrp, new THREE.CylinderGeometry(0.09, 0.09, 2.4, 12), chrome, 0, 0, 0, Math.PI / 2);
   plungerRod.position.set(0, 0.05, 0.6);
   const plungerKnob = part(plungerGrp, new THREE.SphereGeometry(0.2, 12, 8), chrome, 0, 0.05, 1.75);
   part(plungerGrp, new THREE.CylinderGeometry(0.22, 0.22, 0.16, 12), std(0x2a2a30, { metalness: 0.9, roughness: 0.3 }), 0, 0.05, 1.45, Math.PI / 2);
   // housing / spring well
-  part(cab, new THREE.BoxGeometry(0.7, 0.5, 1.6), darkMetal, 6.45, 0.2, 8.6);
-  part(cab, new THREE.BoxGeometry(0.74, 0.06, 1.64), edgeCyan, 6.45, 0.46, 8.6);
+  part(cab, new THREE.BoxGeometry(0.9, 0.5, 1.6), darkMetal, 6.57, 0.2, 8.6);
+  part(cab, new THREE.BoxGeometry(0.94, 0.06, 1.64), edgeCyan, 6.57, 0.46, 8.6);
 
   // ---------- BUMPERS, SLINGS, TARGETS, PORTALS
   const bumpers = [];
@@ -583,21 +589,20 @@ export function buildTable() {
     { a: [-6.0, -10], b: [-5.2, -14.2], r: 0.12 },
     { a: [-5.2, -14.2], b: [-3.2, -15.8], r: 0.12 },
     { a: [-3.2, -15.8], b: [0, -16.4], r: 0.12 },
-    // right inner (main, not plunger)
+    // right inner (lower playfield / outlane) — joins the plunger divider
     { a: [5.25, 8.2], b: [5.25, 2], r: 0.12 },
-    { a: [5.25, 2], b: [5.3, -4], r: 0.12 },
-    { a: [5.3, -4], b: [5.1, -10], r: 0.12 },
-    { a: [5.1, -10], b: [4.4, -14.2], r: 0.12 },
+    { a: [5.25, 2], b: [5.70, -2], r: 0.12 },
+    // upper-right playfield (left of the lane exit mouth)
+    { a: [3.9, -12.4], b: [4.4, -14.2], r: 0.12 },
     { a: [4.4, -14.2], b: [2.6, -15.8], r: 0.12 },
     { a: [2.6, -15.8], b: [0, -16.4], r: 0.12 },
-    // plunger lane
+    // plunger lane left / divider — ends as a one-way tip so the ball can leave
     { a: [6.0, 8.4], b: [6.0, -2], r: 0.1 },
-    { a: [6.0, -2], b: [6.05, -8], r: 0.1 },
-    { a: [6.05, -8], b: [5.6, -11.5], r: 0.1 },
-    { a: [6.9, 8.4], b: [6.9, -2], r: 0.1 },
-    { a: [6.9, -2], b: [6.7, -8], r: 0.1 },
-    { a: [6.7, -8], b: [6.0, -12], r: 0.1 },
-    { a: [5.6, -11.5], b: [4.8, -13.0], r: 0.1 },
+    { a: [6.0, -2], b: [6.0, -8.6], r: 0.1 },
+    // plunger lane right
+    { a: [7.15, 8.4], b: [7.15, -2], r: 0.1 },
+    { a: [7.15, -2], b: [7.05, -7], r: 0.1 },
+    { a: [7.05, -7], b: [6.85, -9.2], r: 0.1 },
     // bottom / outlanes
     { a: [-6.2, 8.2], b: [-3.4, 8.6], r: 0.12 },
     { a: [5.25, 8.2], b: [3.1, 8.6], r: 0.12 },
@@ -608,7 +613,7 @@ export function buildTable() {
     { a: [-3.6, 8.5], b: [-3.2, 5.6], r: 0.08 },
     { a: [3.3, 8.5], b: [2.9, 5.6], r: 0.08 },
     // plunger lane backstop (keeps the ball from falling out the bottom of the lane)
-    { a: [6.0, 8.35], b: [6.9, 8.35], r: 0.14 },
+    { a: [6.0, 8.35], b: [7.15, 8.35], r: 0.14 },
   ];
 
   // ramp paths (follow when triggered)

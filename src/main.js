@@ -18,7 +18,7 @@ const $ = id => document.getElementById(id);
 
 const canvas = $('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: CAPTURE });
-let pixelRatio = Math.min(window.devicePixelRatio || 1, Q.has('lowfx') ? 0.75 : (CAPTURE ? 1.25 : 1.5));
+let pixelRatio = Math.min(window.devicePixelRatio || 1, Q.has('lowfx') ? 0.7 : (CAPTURE ? 1.25 : 1.25));
 renderer.setPixelRatio(pixelRatio);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -58,7 +58,7 @@ const G = {
   enemies: [], shots: [], racers: [],
   riftKills: 0, riftWaves: 0, riftGoal: false,
   warpDest: null, warpFrom: null,
-  demoStarted: false, demoPhase: 'sweep', demoWant: 'rift', lastBonus: 0,
+  demoStarted: false, demoPhase: 'sweep', demoWant: 'rift', lastBonus: 0, portalGrace: 0, riftLitNeed: 3, reachLitNeed: 3,
 };
 window.__game = G;
 
@@ -202,11 +202,11 @@ function setHeroMode(mode) {
 }
 
 const ball = {
-  pos: new THREE.Vector3(6.45, BALL_R, 7.2),
+  pos: new THREE.Vector3(6.57, BALL_R, 7.15),
   vel: new THREE.Vector3(),
   omega: new THREE.Vector3(),
   ramp: null, rampS: 0,
-  inLane: true, charged: 0, pulling: false, live: false,
+  inLane: true, charged: 0, pulling: false, live: false, stuckT: 0,
 };
 const FLIP_LEN = 1.7, FLIP_THICK = 0.22;
 let angL = table.FLIP_REST_L, angR = table.FLIP_REST_R, omL = 0, omR = 0;
@@ -361,6 +361,7 @@ function maybeRamps(dt) {
 }
 
 function maybePortals() {
+  if (G.mode === 'warp' || (G.portalGrace || 0) > 0) return null;
   for (const [id, p] of [['rift', table.portalRift], ['reach', table.portalReach]]) {
     if (!p.lit) continue;
     const d = Math.hypot(ball.pos.x - p.x, ball.pos.z - p.z);
@@ -387,9 +388,10 @@ function updatePlunger(dt) {
 }
 
 function launchPlunger() {
-  const power = 8 + ball.charged * 22;
-  ball.vel.set(-0.4, 0, -power);
-  ball.inLane = true; ball.live = true; ball.pulling = false; ball.charged = 0;
+  // A tap must still clear the lane exit (~16 units uphill against gravity + friction).
+  const power = 26 + ball.charged * 10;
+  ball.vel.set(-0.8, 0, -power);
+  ball.inLane = true; ball.live = true; ball.pulling = false; ball.charged = 0; ball.stuckT = 0;
   SFX.plunger(); G.shake = Math.max(G.shake, 0.2);
   emit(ball.pos.clone(), 10, [0x40e8ff, 0xffffff], 3, { g: 0 });
 }
@@ -405,7 +407,7 @@ function drainCheck() {
 
 function updateBall(dt) {
   if (!ball.live && !ball.pulling && ball.inLane) {
-    ball.pos.set(6.45, BALL_R, 7.15);
+    ball.pos.set(6.57, BALL_R, 7.15);
     ball.vel.set(0, 0, 0);
     poseBall();
     return null;
@@ -426,16 +428,55 @@ function updateBall(dt) {
       collideBallFlipper(-1, angL, omL);
       collideBallFlipper(1, angR, omR);
       collideCircles();
-      if (ball.inLane && (ball.pos.z < -11.2 || ball.pos.x < 5.3)) ball.inLane = false;
-      if (ball.pos.x > 5.85 && ball.pos.z > -11) ball.inLane = true;
+      if (ball.inLane && (ball.pos.z < -8.8 || ball.pos.x < 5.3)) {
+        ball.inLane = false;
+        // Peel left onto mid-playfield instead of overshooting into the back-right portal well.
+        if (ball.vel.x > -8) ball.vel.x -= 8;
+        if (ball.vel.z < -12) ball.vel.z = -12;
+      }
+      if (ball.pos.x > 5.85 && ball.pos.z > -8.5) ball.inLane = true;
     }
     maybeRamps(h);
     const p = maybePortals(); if (p) portal = p;
   }
+  updateStuckBall(dt);
   ball.omega.x = ball.vel.z / BALL_R;
   ball.omega.z = -ball.vel.x / BALL_R;
   poseBall();
   return portal;
+}
+
+function updateStuckBall(dt) {
+  if (!ball.live || ball.ramp) { ball.stuckT = 0; ball._stuckAt = null; return; }
+  if (!ball._stuckAt) ball._stuckAt = ball.pos.clone();
+  const moved = Math.hypot(ball.pos.x - ball._stuckAt.x, ball.pos.z - ball._stuckAt.z);
+  if (moved < 0.8) {
+    ball.stuckT = (ball.stuckT || 0) + dt;
+  } else {
+    ball.stuckT = 0;
+    ball._stuckAt.copy(ball.pos);
+  }
+  if ((ball.stuckT || 0) < 2) return;
+  ball.stuckT = 0;
+  ball._stuckAt = ball.pos.clone();
+  SFX.ding();
+  G.shake = Math.max(G.shake, 0.18);
+  if (ball.inLane) {
+    if (ball.pos.z > -2) {
+      // Sitting or bouncing in the lower lane — shoot through the exit.
+      ball.vel.set(-5, 0, -28);
+    } else {
+      // Jammed at the gate — kick left onto the field.
+      ball.vel.set(-14, 0, -6);
+      if (ball.pos.x > 5.3) ball.pos.x = 5.2;
+      ball.inLane = false;
+    }
+  } else {
+    const ax = ball.pos.x === 0 ? -1 : -Math.sign(ball.pos.x);
+    ball.vel.x += ax * 7;
+    ball.vel.z = Math.min(ball.vel.z, 0) - 8;
+  }
+  emit(ball.pos.clone(), 8, [0x40e8ff, 0xffc070], 3, { g: 0 });
 }
 
 function poseBall() {
@@ -447,19 +488,19 @@ function poseBall() {
 }
 
 function resetBallToPlunger() {
-  ball.pos.set(6.45, BALL_R, 7.15);
+  ball.pos.set(6.57, BALL_R, 7.15);
   ball.vel.set(0, 0, 0);
   ball.ramp = null; ball.rampS = 0;
-  ball.inLane = true; ball.live = false; ball.pulling = false; ball.charged = 0;
+  ball.inLane = true; ball.live = false; ball.pulling = false; ball.charged = 0; ball.stuckT = 0;
   setHeroMode('ball');
   poseBall();
 }
 
 function updatePortalLights() {
-  if (!table.portalRift.lit && (G.riftHits >= 3 || G.hits >= 6)) {
+  if (!table.portalRift.lit && (G.riftHits >= G.riftLitNeed || G.hits >= G.riftLitNeed + 3)) {
     table.setPortalLit('rift', true); SFX.lit(); showMsg('THE RIFT IS OPEN', 'DROP IN TO ENTER', 2.2);
   }
-  if (!table.portalReach.lit && (G.reachHits >= 3 || G.hits >= 8)) {
+  if (!table.portalReach.lit && (G.reachHits >= G.reachLitNeed || G.hits >= G.reachLitNeed + 5)) {
     table.setPortalLit('reach', true); SFX.lit(); showMsg('THE REACH IS OPEN', 'DROP IN TO ENTER', 2.2);
   }
 }
@@ -538,8 +579,8 @@ function updateHeroRift(dt) {
 function targets() { return G.enemies; }
 function center(e, out) { return out.copy(e.pos).setY(e.pos.y + (e.def && e.def.hitY || 0.4)); }
 function findLock() {
-  const fwd = camForwardXZ(new THREE.Vector3()), chest = tmpV3.copy(hero.pos).setY(hero.pos.y + 0.4);
-  let best = null, bs = 1e9; const c = new THREE.Vector3();
+  const fwd = camForwardXZ(tmpF), chest = tmpV3.copy(hero.pos).setY(hero.pos.y + 0.4);
+  let best = null, bs = 1e9; const c = tmpV;
   if (G.mode === 'rift') {
     for (const e of G.enemies) {
       if (e.dead || e.spawnT > 0) continue;
@@ -810,37 +851,48 @@ function updateRacer(r, dt) {
     else r.speed = Math.max(0, r.speed - COAST * dt);
     if (r.speed > cap) r.speed = damp(r.speed, cap, 3, dt);
   }
-  const steerRate = STEER * (1.15 - clamp(r.speed / BOOST_SPD, 0, 1) * 0.55);
-  r.yaw += (r.stun > 0 ? 0 : r.steer) * steerRate * dt;
-  const fwd = tmpF.set(Math.sin(r.yaw), 0, Math.cos(r.yaw));
-  if (r.onGround) { r.vel.x = fwd.x * r.speed; r.vel.z = fwd.z * r.speed; r.vel.y = 0; }
-  else { r.vel.y -= 28 * dt; r.vel.x = damp(r.vel.x, fwd.x * r.speed, 2, dt); r.vel.z = damp(r.vel.z, fwd.z * r.speed, 2, dt); }
-  r.pos.addScaledVector(r.vel, dt);
-  const pr = project(T, r.pos, r.hintS);
-  r.hintS = r.s = pr.s; r.lateral = pr.lateral;
-  const half = pr.w * 0.5;
-  if (Math.abs(pr.lateral) > half) {
-    const push = (Math.abs(pr.lateral) - half);
-    r.pos.addScaledVector(pr.b, -Math.sign(pr.lateral) * push);
-    r.lateral = Math.sign(pr.lateral) * half;
-    r.speed *= 0.92;
+  const steerIn = r.stun > 0 ? 0 : r.steer;
+  const prevS = r.s;
+  const sm0 = sampleAt(T, r.s);
+  const half = sm0.w * 0.5;
+  if (r.onGround) {
+    // Spline-locked: holding accel follows the circuit; A/D changes lane position.
+    r.s = wrapDist(r.s + r.speed * dt, len);
+    r.lateral = clamp(r.lateral + steerIn * Math.max(14, r.speed) * dt * 0.16, -half + 0.2, half - 0.2);
+    const sm = sampleAt(T, r.s);
+    r.pos.copy(sm.p).addScaledVector(sm.b, r.lateral).addScaledVector(sm.n, RIDE);
+    r.hintS = r.s;
+    r.yaw = angLerp(r.yaw, Math.atan2(sm.t.x, sm.t.z) + steerIn * 0.35, 1 - Math.exp(-8 * dt));
+    r.pitch = damp(r.pitch, Math.asin(clamp(sm.t.y, -1, 1)), 8, dt);
+    r.roll = damp(r.roll, -sm.bank - steerIn * 0.25, 6, dt);
+    r.vel.set(sm.t.x * r.speed, sm.t.y * r.speed, sm.t.z * r.speed);
+  } else {
+    const fwd = tmpF.set(Math.sin(r.yaw), 0, Math.cos(r.yaw));
+    r.vel.y -= 28 * dt;
+    r.vel.x = damp(r.vel.x, fwd.x * r.speed, 2, dt);
+    r.vel.z = damp(r.vel.z, fwd.z * r.speed, 2, dt);
+    r.pos.addScaledVector(r.vel, dt);
+    const pr = project(T, r.pos, r.hintS);
+    r.hintS = r.s = pr.s; r.lateral = pr.lateral;
+    const rideY = pr.p.y + pr.n.y * RIDE;
+    if (pr.onRoad && r.pos.y <= rideY + 0.4) {
+      r.onGround = true;
+      r.pos.copy(pr.p).addScaledVector(pr.b, clamp(pr.lateral, -pr.w * 0.5 + 0.2, pr.w * 0.5 - 0.2)).addScaledVector(pr.n, RIDE);
+    } else r.airT += dt;
   }
-  const rideY = pr.p.y + pr.n.y * RIDE;
-  if (r.pos.y <= rideY + 0.4 || pr.onRoad) {
-    r.pos.copy(pr.p).addScaledVector(pr.b, r.lateral).addScaledVector(pr.n, RIDE);
-    r.onGround = true; r.pitch = damp(r.pitch, Math.asin(clamp(pr.t.y, -1, 1)), 8, dt);
-    r.roll = damp(r.roll, -pr.bank - r.steer * 0.25, 6, dt);
-  } else { r.onGround = false; r.airT += dt; }
   if (r.pos.y < -6) {
     const sm = sampleAt(T, r.s);
     r.pos.copy(sm.p).addScaledVector(sm.n, RIDE); r.speed *= 0.5; r.vel.set(0, 0, 0);
+    r.yaw = Math.atan2(sm.t.x, sm.t.z); r.onGround = true;
   }
-  const prevCk = r.ck;
-  r.ck = Math.floor((r.s / len) * 4);
-  if (prevCk === 3 && r.ck === 0) {
-    r.lap++;
-    if (r.isPlayer) { SFX.ding(); showMsg('LAP ' + Math.min(r.lap + 1, LAPS) + '/' + LAPS, '', 1.2); }
-    if (r.lap >= LAPS) { r.finished = true; r.finishT = G.modeT; if (r.isPlayer) finishReach(); }
+  const ds = deltaS(prevS, r.s, len);
+  if (ds > -40 && ds < 80) {
+    if (r.s > len * 0.4 && r.s < len * 0.7) r.ck = 1;
+    if (r.ck && prevS > len * 0.7 && r.s < len * 0.25) {
+      r.ck = 0; r.lap++;
+      if (r.isPlayer) { SFX.ding(); showMsg('LAP ' + Math.min(r.lap + 1, LAPS) + '/' + LAPS, '', 1.2); }
+      if (r.lap >= LAPS) { r.finished = true; r.finishT = G.modeT; if (r.isPlayer) finishReach(); }
+    }
   }
   for (const p of T.pads) {
     if (Math.abs(deltaS(r.s, p.s, len)) < 2 && r.onGround) {
@@ -933,6 +985,7 @@ const apertureHalo = new THREE.Mesh(
 apertureHalo.position.z = -91.5; warpScene.add(apertureHalo);
 let warpT = 0, WARP_DUR = 1.55;
 function enterPortal(dest) {
+  if (G.mode === 'warp') return;
   G.warpFrom = G.mode; G.warpDest = dest; G.mode = 'warp'; G.modeT = 0; warpT = 0;
   SFX.warp(); flash(0.16); showMsg(dest === 'rift' ? 'THE RIFT' : dest === 'reach' ? 'THE REACH' : 'THE TABLE', '', 1.2);
   bloom.strength = 0.32;
@@ -987,15 +1040,15 @@ function arrive(dest) {
     showMsg('THE RIFT', 'THROW THE BLADE · CLEAR THE ISLES', 2.2);
     for (let i = 0; i < 3; i++) makeEnemy(pick(['wisp', 'crawler', 'bird']), riftW.spawnPos());
   } else if (dest === 'reach') {
-    showWorld('reach'); G.mode = 'reach'; G.modeT = 0; G.countdown = 1.5; G._reachDone = false;
+    showWorld('reach'); G.mode = 'reach'; G.modeT = 0; G.countdown = 3; G._reachDone = false;
     spawnField(); ModeMusic.set('audio/reach');
-    showMsg('THE REACH', 'RACE THE GRID', 1.6);
+    showMsg('THE REACH', 'HOLD W TO ACCEL  ·  A / D STEER', 1.8);
   } else {
     clearRift(); clearRacers();
-    showWorld('table'); G.mode = 'pinball'; G.modeT = 0;
+    showWorld('table'); G.mode = 'pinball'; G.modeT = 0; G.portalGrace = 1.5;
     setHeroMode('ball'); resetBallToPlunger(); ModeMusic.set('audio/pinball');
-    if (G.warpFrom === 'rift') { table.setPortalLit('rift', false); G.demoWant = 'reach'; }
-    if (G.warpFrom === 'reach') { table.setPortalLit('reach', false); G.demoWant = 'done'; }
+    if (G.warpFrom === 'rift') { table.setPortalLit('rift', false); G.riftLitNeed = G.riftHits + 3; G.demoWant = 'reach'; }
+    if (G.warpFrom === 'reach') { table.setPortalLit('reach', false); G.reachLitNeed = G.reachHits + 3; G.demoWant = 'done'; }
     showMsg('BACK TO THE TABLE', G.lastBonus ? '+' + G.lastBonus : '', 1.8);
   }
   G.modeT = 0;
@@ -1187,7 +1240,7 @@ function titleInput() {
 }
 function startGame() {
   G.mode = 'pinball'; G.t = 0; G.modeT = 0; G.score = 0; G.balls = 3; G.hits = 0; G.riftHits = 0; G.reachHits = 0;
-  G.endT = 0; G.combo = 0; table.setScore(0); G.demoWant = 'rift';
+  G.endT = 0; G.combo = 0; table.setScore(0); G.demoWant = 'rift'; G.riftLitNeed = 3; G.reachLitNeed = 3; G.portalGrace = 0;
   table.setPortalLit('rift', false); table.setPortalLit('reach', false);
   for (const t of table.targets) { t.down = false; t.group.visible = true; }
   document.body.classList.add('playing'); $('end').style.display = 'none';
@@ -1338,6 +1391,20 @@ const AP = {
 function updateHud(dt) {
   if (msgT > 0) { msgT -= dt; if (msgT <= 0) { $('msg').style.opacity = 0; $('sub').style.opacity = 0; } }
   flashA = Math.max(0, flashA - dt * 2.2); $('flash').style.opacity = flashA;
+  const countEl = $('count');
+  if (countEl) {
+    if (G.mode === 'reach' && (G.countdown > 0 || G.modeT < 3.7)) {
+      if (G.countdown > 0) {
+        countEl.textContent = String(Math.max(1, Math.ceil(G.countdown)));
+        countEl.style.opacity = '1';
+      } else {
+        countEl.textContent = 'GO!';
+        countEl.style.opacity = String(clamp(1 - (G.modeT - 3) / 0.6, 0, 1));
+      }
+    } else {
+      countEl.style.opacity = '0';
+    }
+  }
   hurtA = Math.max(0, hurtA - dt * 2.5); $('hurt').style.opacity = String(hurtA);
   $('score').textContent = 'SCORE  ' + (G.score | 0).toLocaleString('en-US');
   $('balls').textContent = 'BALLS  ' + Math.max(0, G.balls);
@@ -1374,6 +1441,7 @@ function updateTitle(dt) {
 
 function update(dt) {
   G.t += dt; G.modeT += dt;
+  if (G.portalGrace) G.portalGrace = Math.max(0, G.portalGrace - dt);
   if (G.mode === 'title') { updateTitle(dt); updateParticles(dt); updateDebris(dt); updateRings(dt); updateCamera(dt); return; }
   if (G.mode === 'win' || G.mode === 'over') { G.endT += dt; table.update(G.t, dt); updateParticles(dt); updateDebris(dt); updateRings(dt); updateCamera(dt); if (DEMO && G.endT > 6 && !CAPTURE) toTitle(); return; }
   if (G.mode === 'warp') { updateWarp(dt); updateParticles(dt); updateCamera(dt); return; }
@@ -1391,7 +1459,7 @@ function update(dt) {
       if (k >= 1) G.sub = 'toLane';
     } else if (G.sub === 'toLane') {
       setHeroMode('ball');
-      const tgt = tmpV.set(6.45, BALL_R, 7.15);
+      const tgt = tmpV.set(6.57, BALL_R, 7.15);
       H.root.position.lerp(tgt, 1 - Math.exp(-dt * 3.2));
       H.shell.rotation.x += dt * 8;
       if (H.root.position.distanceTo(tgt) < 0.2) {
@@ -1455,7 +1523,7 @@ function loop(now) {
   Snd.update(rawDt); ModeMusic.update(rawDt); updateHud(dt); updateFloats(dt); render();
   if (G.mode !== 'title') {
     perfSum += dt; perfN++;
-    if (perfN >= 120) {
+    if (perfN >= 60) {
       const avg = perfSum / perfN; perfN = 0; perfSum = 0;
       if (avg > 1 / 36 && !Q.has('hifx')) { if (useBloom) useBloom = false; else if (pixelRatio > 0.6) { pixelRatio = Math.max(0.6, pixelRatio * 0.8); renderer.setPixelRatio(pixelRatio); resize(); } }
     }
@@ -1487,4 +1555,7 @@ if (CAPTURE) {
   };
 } else requestAnimationFrame(loop);
 
-window.__dbg = { G, hero, ball, table, H, Snd, AP, camState, startGame, enterPortal, get titleArmed() { return titleArmed; } };
+window.__dbg = {
+  G, hero, ball, table, H, Snd, AP, camState, startGame, enterPortal, leavePortal, openRiftExit,
+  keys, input, get player() { return player; }, get titleArmed() { return titleArmed; },
+};
