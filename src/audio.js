@@ -5,6 +5,7 @@
 //   audio/rift.{ogg,mp3}         — Portal A action level
 //   audio/reach.{ogg,mp3}        — Portal B racer
 // Picked with canPlayType. ModeMusic in main.js fades between gameplay beds.
+export const AUDIO_V = '2795d981-wgame'; // title = new theme, pinball = Wadget gameplay
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 export const Snd = {
   ac: null, master: null, title: null, titleVol: 0, unlocked: false, muted: false, duck: 1, noiseBuf: null, onTitle: true,
@@ -25,7 +26,7 @@ export const Snd = {
     if (this.title) return;
     const a = new Audio(); a.loop = true; a.preload = 'auto';
     const ogg = a.canPlayType('audio/ogg; codecs="vorbis"') || a.canPlayType('audio/ogg; codecs="opus"');
-    a.src = ogg ? 'audio/title-theme.ogg' : 'audio/title-theme.mp3';
+    a.src = (ogg ? 'audio/title-theme.ogg' : 'audio/title-theme.mp3') + '?v=' + AUDIO_V;
     a.volume = 0; this.title = a;
   },
   playTitle() {

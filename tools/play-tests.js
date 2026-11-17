@@ -81,6 +81,8 @@ async function state(page) {
       musicPaused: d.ModeMusic && d.ModeMusic.el ? !!d.ModeMusic.el.paused : null,
       musicVol: d.ModeMusic ? +((d.ModeMusic.vol || 0).toFixed(2)) : 0,
       musicOut: d.ModeMusic && d.ModeMusic.outgoing ? (d.ModeMusic.outgoing.src || 'yes') : null,
+      titleMusic: d.Snd && d.Snd.title && d.Snd.title.src ? String(d.Snd.title.src) : '',
+      titlePaused: d.Snd && d.Snd.title ? !!d.Snd.title.paused : null,
     };
   });
 }
@@ -132,9 +134,12 @@ async function placeBall(page, x, z, opts) {
 
   // ---------- start a real game (two-step title) ----------
   await p.keyboard.press('Enter');
-  await p.waitForTimeout(200);
+  let st = await waitFor(p, s => /title-theme\.(ogg|mp3)/i.test(s.titleMusic || '') && s.titlePaused === false, 8000);
+  if (st && /title-theme\.(ogg|mp3)/i.test(st.titleMusic || '') && st.titlePaused === false) {
+    pass('title-music-plays', 'src=' + st.titleMusic);
+  } else fail('title-music-plays', JSON.stringify({ titleMusic: st && st.titleMusic, titlePaused: st && st.titlePaused, mode: st && st.mode }));
   await p.keyboard.press('Enter');
-  let st = await waitFor(p, s => s.mode === 'pinball' && s.sub === 'plunge', 20000);
+  st = await waitFor(p, s => s.mode === 'pinball' && s.sub === 'plunge', 20000);
   if (!(st && st.mode === 'pinball' && st.sub === 'plunge')) {
     fail('start-plunge', JSON.stringify(st));
     await snap(p, 'start_fail');
@@ -143,6 +148,10 @@ async function placeBall(page, x, z, opts) {
     process.exit(1);
   }
   pass('start-plunge', 'modeT=' + st.modeT);
+  st = await waitFor(p, s => /pinball\.(ogg|mp3)/i.test(s.music || ''), 8000);
+  if (st && /pinball\.(ogg|mp3)/i.test(st.music || '')) {
+    pass('table-music-plays', 'src=' + st.music + ' paused=' + st.musicPaused + ' vol=' + st.musicVol);
+  } else fail('table-music-plays', JSON.stringify({ music: st && st.music, paused: st && st.musicPaused, mode: st && st.mode }));
 
   // ---------- (1) real Space plunge — ball must roll out onto the playfield ----------
   await p.keyboard.down('Space');

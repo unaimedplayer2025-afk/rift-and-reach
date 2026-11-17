@@ -4,7 +4,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { Snd, SFX } from './audio.js';
+import { Snd, SFX, AUDIO_V } from './audio.js';
 import { rnd, pick, clamp, lerp, damp, angLerp, Tex, additive } from './util.js';
 import { buildRowlex, poseRowlex, buildDisc, RIVALS } from './models.js';
 import { buildTable, BALL_R } from './table.js';
@@ -75,7 +75,7 @@ function pickSrc(base) {
   if (/\.(ogg|mp3|wav|m4a)$/i.test(base)) return base;
   const a = document.createElement('audio');
   const ogg = a.canPlayType('audio/ogg; codecs="vorbis"') || a.canPlayType('audio/ogg; codecs="opus"');
-  return ogg ? base + '.ogg' : base + '.mp3';
+  return (ogg ? base + '.ogg' : base + '.mp3') + '?v=' + AUDIO_V;
 }
 const ModeMusic = {
   el: null, url: null, vol: 0, outgoing: null, outVol: 0,
