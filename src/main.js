@@ -8,8 +8,10 @@ import { Snd, SFX } from './audio.js';
 import { rnd, pick, clamp, lerp, damp, angLerp, Tex, additive } from './util.js';
 import { buildRowlex, poseRowlex, buildDisc, RIVALS } from './models.js';
 import { buildTable, BALL_R } from './table.js';
+import { createWorld, syncMesh, BOUNDS } from './physics.js';
 import { buildRiftWorld, RIFT_ENEMIES } from './rift.js';
 import { buildReachWorld, sampleAt, project, wrapDist, deltaS } from './reach.js';
+import { buildReentryWorld } from './reentry.js';
 
 const Q = new URLSearchParams(location.search);
 const CAPTURE = Q.has('capture'), DEMO = Q.has('demo') || CAPTURE;
@@ -45,8 +47,12 @@ addEventListener('resize', resize); resize();
 const table = buildTable(); scene.add(table.root);
 const riftW = buildRiftWorld(); scene.add(riftW.group);
 const reachW = buildReachWorld(); scene.add(reachW.group);
+const reentryW = buildReentryWorld(); scene.add(reentryW.group);
 
 const H = buildRowlex(1); scene.add(H.root);
+const extraBalls = [buildRowlex(1), buildRowlex(1)];
+for (const E of extraBalls) { E.setMode('ball'); E.root.visible = false; scene.add(E.root); }
+const world = createWorld(table.layout);
 const disc = buildDisc(1); scene.add(disc);
 const CHAIN_N = 18;
 const chain = new THREE.InstancedMesh(new THREE.BoxGeometry(0.045, 0.045, 0.16), new THREE.MeshStandardMaterial({ color: 0x8a8a90, metalness: 1, roughness: 0.3, emissive: 0x400800 }), CHAIN_N);
@@ -57,8 +63,11 @@ const G = {
   hits: 0, combo: 0, comboT: 0, endT: 0, flash: 0,
   enemies: [], shots: [], racers: [],
   riftKills: 0, riftWaves: 0, riftGoal: false,
+  reentryHits: 0, reentryLitNeed: 2,
   warpDest: null, warpFrom: null,
   demoStarted: false, demoPhase: 'sweep', demoWant: 'rift', lastBonus: 0, portalGrace: 0, riftLitNeed: 3, reachLitNeed: 3,
+  multiball: false, jackpot: 5000, locks: 0, dmdCall: '', dmdCallT: 0, rowlex: '',
+  shotCombo: 0, _lastShotT: 0, _lastShot: '',
 };
 window.__game = G;
 
@@ -93,7 +102,7 @@ const ModeMusic = {
     }
   }
 };
-function playingMusic() { return G.mode === 'pinball' || G.mode === 'rift' || G.mode === 'reach'; }
+function playingMusic() { return G.mode === 'pinball' || G.mode === 'rift' || G.mode === 'reach' || G.mode === 'reentry'; }
 
 const PN = 1100;
 const pPos = new Float32Array(PN * 3), pCol = new Float32Array(PN * 3), pData = [];
@@ -488,20 +497,280 @@ function poseBall() {
 }
 
 function resetBallToPlunger() {
-  ball.pos.set(6.57, BALL_R, 7.15);
-  ball.vel.set(0, 0, 0);
+  const L = table.layout.plunger;
+  world.resetBall(world.primary(), L.x, L.z, { live: false, inLane: true });
+  const b = world.primary();
+  ball.pos.set(b.x, b.y, b.z); ball.vel.set(0, 0, 0);
   ball.ramp = null; ball.rampS = 0;
   ball.inLane = true; ball.live = false; ball.pulling = false; ball.charged = 0; ball.stuckT = 0;
   setHeroMode('ball');
   poseBall();
 }
 
+function syncCompatBall() {
+  const b = world.primary();
+  if (!b) return;
+  ball.pos.set(b.x, b.y, b.z);
+  ball.vel.set(b.vx, b.vy, b.vz);
+  ball.live = b.live; ball.inLane = b.inLane; ball.charged = b.charged;
+  ball.pulling = b.pulling; ball.saveT = b.saveT;
+}
+
+function poseAllBalls(dt) {
+  const meshes = [H, ...extraBalls];
+  for (let i = 0; i < meshes.length; i++) {
+    const E = meshes[i], b = world.balls[i];
+    if (!b || i > 0 && !b.live && (b.inLane || !b.live)) {
+      if (i > 0) E.root.visible = false;
+      if (i === 0 && b) syncMesh(b, E.root, E.shell, dt);
+      continue;
+    }
+    E.root.visible = true;
+    if (i > 0) E.setMode('ball');
+    syncMesh(b, E.root, E.shell, dt);
+    if (E.shadow) { E.shadow.position.y = -b.r + 0.02; E.shadow.material.opacity = 0.4; }
+  }
+}
+
+function dmdSay(text, sub, dur) {
+  G.dmdCall = text; G.dmdCallT = dur || 1.8;
+  if (table.dmd) table.dmd.state.line2 = sub || '';
+}
+
+function startMultiball() {
+  if (G.multiball) return;
+  G.multiball = true; G.jackpot = 8000;
+  world.magnetOn = true;
+  if (table.feat && table.feat.magnet) table.feat.magnet.on = true;
+  const L = table.layout;
+  const spots = [
+    [L.saucer.x, L.saucer.z - 0.2],
+    [0.4, 5.2],
+  ];
+  while (world.balls.length < 3) {
+    const s = spots[world.balls.length - 1] || [0, 4];
+    const nb = world.addBall(s[0], s[1]);
+    nb.live = true; nb.inLane = false; nb.vx = (Math.random() - 0.5) * 6; nb.vz = -12; nb.saveT = 4;
+  }
+  SFX.callout('MULTIBALL'); SFX.jackpot();
+  showMsg('MULTIBALL', '3 ROWLEX IN PLAY', 2.2);
+  dmdSay('MULTIBALL', 'JACKPOT LIT', 2.4);
+  G.shake = Math.max(G.shake, 0.45); flash(0.4);
+  table.flashInserts('all');
+}
+
+function handlePhysEvents(evs) {
+  let portal = null;
+  for (const ev of evs) {
+    const pos = tmpV.set(ev.x || 0, (ev.y || 0.4) + 0.2, ev.z || 0);
+    switch (ev.type) {
+      case 'bumper':
+        if (ev.bumper && ev.bumper.group) table.flashBumper(ev.bumper, 1);
+        else if (ev.bumper) table.flashBumper(table.bumpers[0] || ev.bumper, 0.7);
+        SFX.bumper(); addScore(250, pos); G.hits++;
+        if ((ev.x || 0) < 0) G.riftHits++; else G.reachHits++;
+        G.shake = Math.max(G.shake, 0.35); flash(0.2);
+        emit(pos, 16, [ev.color || 0x40e8ff, 0xffffff], 6, { up: 3, g: 2 });
+        table.flashArcs();
+        noteCombo('bumper', ev);
+        break;
+      case 'sling':
+        if (table.slings[ev.sling]) table.slings[ev.sling].flash = 1;
+        SFX.sling(); addScore(50, pos); G.shake = Math.max(G.shake, 0.15);
+        break;
+      case 'flip':
+        SFX.flip();
+        // Cycle rollover lights with the flippers, like a real table.
+        if (table.layout.rollovers && table.layout.rollovers.length) {
+          const arr = table.layout.rollovers;
+          const lit = arr.map((r) => r.lit);
+          if (ev.side === 'L') {
+            const f = lit.shift(); lit.push(f);
+          } else {
+            const f = lit.pop(); lit.unshift(f);
+          }
+          arr.forEach((r, i) => { r.lit = lit[i]; });
+        }
+        break;
+      case 'standup':
+        SFX.target(); addScore(400, pos); G.hits++;
+        noteCombo('standup', ev);
+        if (ev.letter) {
+          const all = table.layout.standups.every((s) => s.lit);
+          if (all) {
+            addScore(2500, pos); SFX.callout('ROWLEX'); dmdSay('ROWLEX', 'MULTIBALL LOCK', 2);
+            G.locks++;
+            if (G.locks >= 1 && !G.multiball) startMultiball();
+            table.layout.standups.forEach((s) => { s.lit = false; });
+          }
+        }
+        break;
+      case 'drop':
+        SFX.target(); addScore(350, pos); G.hits++;
+        if (table.layout.drops.every((d) => d.down)) {
+          addScore(2000, pos); showMsg('BANK DOWN', '+2000', 1.4);
+          table.layout.drops.forEach((d) => { d.down = false; });
+          world.magnetOn = true;
+          if (table.feat && table.feat.magnet) table.feat.magnet.on = true;
+        }
+        break;
+      case 'rollover':
+        if (ev.lane != null && table.layout.rollovers[ev.lane]) table.layout.rollovers[ev.lane].lit = true;
+        SFX.ding(); addScore(150, pos);
+        if (table.layout.rollovers.every((r) => r.lit)) {
+          addScore(1000, pos);
+          if (table.layout.kickback) table.layout.kickback.lit = true;
+          table.layout.rollovers.forEach((r) => { r.lit = false; });
+          showMsg('KICKBACK LIT', 'LEFT OUTLANE', 1.4);
+        }
+        break;
+      case 'spinner':
+        SFX.spinner(); addScore(100 + Math.floor((ev.speed || 0) * 20), pos);
+        break;
+      case 'saucerIn':
+        SFX.saucer(); addScore(G.multiball ? G.jackpot : 750, pos);
+        if (G.multiball) {
+          SFX.jackpot(); SFX.callout('JACKPOT'); dmdSay('JACKPOT', String(G.jackpot), 1.8);
+          showMsg('JACKPOT', '+' + G.jackpot, 1.6);
+          G.jackpot += 2500;
+          G.shake = Math.max(G.shake, 0.5); flash(0.35);
+        } else {
+          dmdSay('SCOOP', 'HOLD ON', 1);
+        }
+        break;
+      case 'saucerOut':
+        SFX.kicker();
+        break;
+      case 'kickback':
+        SFX.kicker(); addScore(500, pos); showMsg('KICKBACK', '', 1);
+        break;
+      case 'captive':
+        SFX.clang(); addScore(200, pos);
+        break;
+      case 'rampEnter':
+      case 'railEnter':
+        SFX.ramp(); addScore(ev.score || 1500, pos); G.shake = Math.max(G.shake, 0.2);
+        noteCombo('ramp', ev);
+        G.reentryHits = (G.reentryHits || 0) + 1;
+        if (G.multiball) { addScore(1500, pos); }
+        break;
+      case 'launch':
+        SFX.plunger(); G.shake = Math.max(G.shake, 0.2);
+        emit(pos, 10, [0x40e8ff, 0xffffff], 3, { g: 0 });
+        break;
+      case 'save':
+        SFX.save(); SFX.callout('BALL SAVED'); showMsg('BALL SAVED', 'SHOOT AGAIN', 1.6); dmdSay('BALL SAVED', '', 1.6);
+        G.shake = Math.max(G.shake, 0.25);
+        break;
+      case 'returned':
+        SFX.returned(); SFX.callout('BALL RETURNED'); showMsg('BALL RETURNED', 'BACK TO THE LANE', 1.8);
+        dmdSay('BALL RETURNED', '', 1.8);
+        G.sub = 'plunge';
+        break;
+      case 'drain':
+        handleDrain(ev);
+        break;
+      case 'stuck':
+        SFX.ding();
+        break;
+      case 'magnetGrab':
+        SFX.magnet(); showMsg('MAGNET', '', 0.8);
+        break;
+      case 'diverter':
+        SFX.ding();
+        if (table.feat && table.feat.diverter) table.feat.diverter._want = ev.state;
+        break;
+      case 'tiltWarn':
+        SFX.callout('DANGER'); showMsg('DANGER', 'TILT WARNING', 1.4); dmdSay('DANGER', 'TILT WARNING', 1.4);
+        break;
+      case 'tilt':
+        SFX.tilt(); SFX.callout('TILT'); showMsg('TILT', 'FLIPPERS DEAD', 2); dmdSay('TILT', '', 2);
+        G.shake = Math.max(G.shake, 0.5);
+        break;
+    }
+  }
+  return portal;
+}
+
+function handleDrain(ev) {
+  const still = world.balls.filter((b) => b !== ev.ball && b.live);
+  if (still.length) {
+    showMsg('BALL DRAINED', still.length + ' IN PLAY', 1.2);
+    return;
+  }
+  ballLost();
+}
+
+function noteCombo(kind, ev) {
+  const now = G.t;
+  if (G._lastShotT != null && now - G._lastShotT < 2.6 && G._lastShot !== kind) {
+    G.shotCombo = (G.shotCombo || 1) + 1;
+    if (G.shotCombo >= 3) {
+      const bonus = 400 * G.shotCombo;
+      addScore(bonus, tmpV.set(ev.x, 0.6, ev.z));
+      SFX.callout('COMBO'); showMsg('COMBO x' + G.shotCombo, '+' + bonus, 1.2);
+      dmdSay('COMBO x' + G.shotCombo, '+' + bonus, 1.2);
+    }
+  } else G.shotCombo = 1;
+  G._lastShotT = now; G._lastShot = kind;
+}
+
+function checkPortals() {
+  if (G.mode === 'warp' || (G.portalGrace || 0) > 0) return null;
+  for (const b of world.balls) {
+    if (!b.live || b.path || b.inLane) continue;
+    for (const [id, p] of [['rift', table.portalRift], ['reach', table.portalReach], ['reentry', table.portalReentry]]) {
+      if (!p.lit) continue;
+      const d = Math.hypot(b.x - p.x, b.z - p.z);
+      if (d < 3.2) {
+        const k = (1 - d / 3.2) * 10;
+        const nx = (p.x - b.x) / (d || 1), nz = (p.z - b.z) / (d || 1);
+        b.vx += nx * k * 0.15; b.vz += nz * k * 0.15;
+      }
+      if (d < p.r + 0.15) return id;
+    }
+  }
+  return null;
+}
+
+function stepPinball(dt) {
+  world.setFlippers(!!(keys.FlipL || touch.flipL), !!(keys.FlipR || touch.flipR));
+  world.plungerDown = !!(keys.Plunge || touch.plunge);
+  const pull = world.updatePlunger(dt);
+  table.plungerRod.position.z = 0.6 + pull * 1.1;
+  table.plungerKnob.position.z = 1.75 + pull * 1.1;
+  const evs = world.step(dt);
+  handlePhysEvents(evs);
+  syncCompatBall();
+  if (ball.live && G.sub === 'plunge') G.sub = 'play';
+  table.flipL.rotation.y = world.flipL.ang;
+  table.flipR.rotation.y = -world.flipR.ang;
+  table.flipL.userData.light.intensity = 0.8 + (world.flipL.pressed ? 1.4 : 0);
+  table.flipR.userData.light.intensity = 0.8 + (world.flipR.pressed ? 1.4 : 0);
+  if (table.feat && table.feat.miniFlip) table.feat.miniFlip.rotation.y = world.miniFlip.ang;
+  if (table.feat && table.feat.diverter) table.feat.diverter._want = world.diverter;
+  const focus = world.balls.find((b) => b.live) || world.primary();
+  if (focus) table.trackBall(focus.x, focus.z);
+  poseAllBalls(dt);
+  if (G.dmdCallT > 0) G.dmdCallT -= dt;
+  const save = world.primary() && world.primary().saveT > 0 ? ('SAVE ' + world.primary().saveT.toFixed(1)) : '';
+  const modeLine = G.multiball ? 'MULTIBALL' : (table.portalRift.lit ? 'RIFT OPEN' : (table.portalReach.lit ? 'REACH OPEN' : 'PINBALL'));
+  if (table.dmd) table.dmd.draw(G.score, G.balls, save || modeLine, G.dmdCallT > 0 ? G.dmdCall : '');
+  return checkPortals();
+}
+
 function updatePortalLights() {
   if (!table.portalRift.lit && (G.riftHits >= G.riftLitNeed || G.hits >= G.riftLitNeed + 3)) {
-    table.setPortalLit('rift', true); SFX.lit(); showMsg('THE RIFT IS OPEN', 'DROP IN TO ENTER', 2.2);
+    table.setPortalLit('rift', true); SFX.lit(); SFX.callout('RIFT OPEN');
+    showMsg('RIFT OPEN', 'DROP IN TO ENTER', 2.2); dmdSay('RIFT OPEN', 'DROP IN', 2.2);
   }
   if (!table.portalReach.lit && (G.reachHits >= G.reachLitNeed || G.hits >= G.reachLitNeed + 5)) {
-    table.setPortalLit('reach', true); SFX.lit(); showMsg('THE REACH IS OPEN', 'DROP IN TO ENTER', 2.2);
+    table.setPortalLit('reach', true); SFX.lit(); SFX.callout('REACH OPEN');
+    showMsg('REACH OPEN', 'DROP IN TO ENTER', 2.2); dmdSay('REACH OPEN', 'DROP IN', 2.2);
+  }
+  if (table.portalReentry && !table.portalReentry.lit && (G.reentryHits >= G.reentryLitNeed || G.hits >= G.reentryLitNeed + 6)) {
+    table.setPortalLit('reentry', true); SFX.lit(); SFX.callout('RE-ENTRY OPEN');
+    showMsg('RE-ENTRY OPEN', 'DROP IN TO ENTER', 2.2); dmdSay('RE-ENTRY OPEN', 'DROP IN', 2.2);
   }
 }
 
@@ -987,10 +1256,11 @@ let warpT = 0, WARP_DUR = 1.55;
 function enterPortal(dest) {
   if (G.mode === 'warp') return;
   G.warpFrom = G.mode; G.warpDest = dest; G.mode = 'warp'; G.modeT = 0; warpT = 0;
-  SFX.warp(); flash(0.16); showMsg(dest === 'rift' ? 'THE RIFT' : dest === 'reach' ? 'THE REACH' : 'THE TABLE', '', 1.2);
+  SFX.warp(); flash(0.16); showMsg(dest === 'rift' ? 'THE RIFT' : dest === 'reach' ? 'THE REACH' : dest === 'reentry' ? 'RE-ENTRY' : 'THE TABLE', '', 1.2);
   bloom.strength = 0.32;
   if (dest === 'rift') { tunnelMat.uniforms.colA.value.set(0x1860e0); tunnelMat.uniforms.colB.value.set(0x20d0e8); portalAperture.material.color.set(0x40e8ff); }
   else if (dest === 'reach') { tunnelMat.uniforms.colA.value.set(0x7010d0); tunnelMat.uniforms.colB.value.set(0xe040c0); portalAperture.material.color.set(0xe040ff); }
+  else if (dest === 'reentry') { tunnelMat.uniforms.colA.value.set(0x3a1a08); tunnelMat.uniforms.colB.value.set(0xff6a20); portalAperture.material.color.set(0xff8a20); }
   else { tunnelMat.uniforms.colA.value.set(0x2a20e0); tunnelMat.uniforms.colB.value.set(0x9010d8); portalAperture.material.color.set(0xc080ff); }
   warpCam.position.set(0, 0, 8); warpCam.lookAt(0, 0, -8);
 }
@@ -1025,12 +1295,15 @@ function showWorld(name) {
   table.space.visible = name === 'table';
   riftW.group.visible = name === 'rift';
   reachW.group.visible = name === 'reach';
+  reentryW.group.visible = name === 'reentry';
   document.body.classList.toggle('mode-pinball', name === 'table');
   document.body.classList.toggle('mode-rift', name === 'rift');
   document.body.classList.toggle('mode-reach', name === 'reach');
+  document.body.classList.toggle('mode-reentry', name === 'reentry');
   if (name === 'table') { renderer.toneMappingExposure = 1.0; bloom.strength = 0.52; scene.fog = null; }
   else if (name === 'rift') { renderer.toneMappingExposure = riftW.look.exposure; bloom.strength = riftW.look.bloom; scene.fog = new THREE.FogExp2(riftW.look.fog.color, riftW.look.fog.density); }
   else if (name === 'reach') { renderer.toneMappingExposure = reachW.look.exposure; bloom.strength = reachW.look.bloom; scene.fog = new THREE.FogExp2(reachW.look.fog.color, reachW.look.fog.density); }
+  else if (name === 'reentry') { renderer.toneMappingExposure = reentryW.look.exposure; bloom.strength = reentryW.look.bloom; scene.fog = new THREE.FogExp2(reentryW.look.fog.color, reentryW.look.fog.density); }
 }
 function arrive(dest) {
   if (dest === 'rift') {
@@ -1043,18 +1316,70 @@ function arrive(dest) {
     showWorld('reach'); G.mode = 'reach'; G.modeT = 0; G.countdown = 3; G._reachDone = false;
     spawnField(); ModeMusic.set('audio/reach');
     showMsg('THE REACH', 'HOLD W TO ACCEL  ·  A / D STEER', 1.8);
+  } else if (dest === 'reentry') {
+    startReentry();
   } else {
-    clearRift(); clearRacers();
+    clearRift(); clearRacers(); endReentry();
     showWorld('table'); G.mode = 'pinball'; G.modeT = 0; G.portalGrace = 1.5;
     setHeroMode('ball'); resetBallToPlunger(); ModeMusic.set('audio/pinball');
     if (G.warpFrom === 'rift') { table.setPortalLit('rift', false); G.riftLitNeed = G.riftHits + 3; G.demoWant = 'reach'; }
-    if (G.warpFrom === 'reach') { table.setPortalLit('reach', false); G.reachLitNeed = G.reachHits + 3; G.demoWant = 'done'; }
+    if (G.warpFrom === 'reach') { table.setPortalLit('reach', false); G.reachLitNeed = G.reachHits + 3; G.demoWant = 'reentry'; }
+    if (G.warpFrom === 'reentry') { table.setPortalLit('reentry', false); G.reentryLitNeed = (G.reentryHits || 0) + 2; G.demoWant = 'done'; }
     showMsg('BACK TO THE TABLE', G.lastBonus ? '+' + G.lastBonus : '', 1.8);
   }
   G.modeT = 0;
 }
+function startReentry() {
+  showWorld('reentry');
+  G.mode = 'reentry'; G.modeT = 0; G._reentryDone = false;
+  reentryW.reset();
+  input.mx = input.my = 0; input.boost = false;
+  setHeroMode('ball');
+  reentryW.cap.dock.add(H.root);
+  const off = reentryW.rowlexOffset();
+  H.root.position.set(off.x, off.y, off.z);
+  H.root.rotation.set(0, 0, 0);
+  H.root.scale.setScalar(off.s);
+  ModeMusic.set('audio/pinball');
+  SFX.undock(); SFX.callout('RE-ENTRY');
+  showMsg('RE-ENTRY', 'UNDOCKING  ·  HOLD THE CORRIDOR', 2.4);
+}
+function endReentry() {
+  H.root.scale.setScalar(1);
+  if (H.root.parent !== scene) scene.add(H.root);
+}
+function updateReentry(dt) {
+  const stick = touch.stickId != null;
+  const pitch = ((keys.KeyS || keys.ArrowDown || touch.pitchDown) ? -1 : 0)
+    + ((keys.KeyW || keys.ArrowUp || touch.pitchUp) ? 1 : 0)
+    + (stick && input.my < -0.25 ? -1 : stick && input.my > 0.25 ? 1 : 0);
+  const bank = ((keys.KeyD || keys.ArrowRight || touch.bankR) ? 1 : 0)
+    + ((keys.KeyA || keys.ArrowLeft || touch.bankL) ? -1 : 0)
+    + (stick ? (input.mx || 0) : 0);
+  const shield = !!(keys.ShiftLeft || keys.ShiftRight || keys.Space || keys.Plunge || input.boost || touch.shield);
+  const ev = reentryW.update(dt, { pitch, bank, shield });
+  const off = reentryW.rowlexOffset();
+  if (H.root.parent !== reentryW.cap.dock) reentryW.cap.dock.add(H.root);
+  H.root.position.set(off.x, off.y, off.z);
+  H.root.scale.setScalar(off.s);
+  poseRowlex(H, { t: G.t, sp: reentryW.flight.speed * 0.2 });
+  if (ev && ev.event === 'undock') { SFX.undock(); showMsg('UNDOCK', 'ARRAYS FOLDING', 1.4); }
+  if (ev && ev.event === 'reentry') { SFX.reentry(); showMsg('INTERFACE', 'W / S PITCH  ·  SHIFT SHIELD', 2.2); }
+  if (ev && ev.event === 'shield') SFX.shield();
+  if (ev && ev.event === 'chute') { SFX.chute(); showMsg('CHUTES', 'ON THE DECK', 1.8); dmdSay('CHUTES', '', 1.8); }
+  if (ev && ev.event === 'splash') { SFX.splash(); SFX.callout('SPLASHDOWN'); showMsg('SPLASHDOWN', '+' + ev.bonus, 2.2); flash(0.35); }
+  if (ev && ev.event === 'breakup') { SFX.breakup(); SFX.callout('BREAKUP'); showMsg('BREAKUP', 'HULL LOST', 2.2); flash(0.5); G.shake = 0.8; }
+  if (ev && ev.event === 'skip') { SFX.skip(); SFX.callout('SKIPPED'); showMsg('SKIPPED', 'TOO SHALLOW', 2.2); }
+  if (ev && ev.leave && !G._reentryDone) {
+    G._reentryDone = true;
+    leavePortal(!!ev.success, ev.bonus || 0);
+  }
+  // plasma rumble while in the fire
+  if (reentryW.flight.phase === 'reentry' && reentryW.flight.heat > 40 && Math.random() < dt * 1.2) SFX.plasma();
+  G.shake = Math.max(G.shake, (reentryW.flight.heat / 100) * 0.35);
+}
 function leavePortal(success, bonus) {
-  if (G.mode !== 'rift' && G.mode !== 'reach') return;
+  if (G.mode !== 'rift' && G.mode !== 'reach' && G.mode !== 'reentry') return;
   G.lastBonus = bonus | 0; addScore(G.lastBonus);
   SFX.ding(); enterPortal('table');
 }
@@ -1105,11 +1430,18 @@ function updateCamera(dt) {
   }
   if (G.mode === 'warp') return;
   if (G.mode === 'pinball') {
-    const px = clamp(ball.pos.x * 0.16, -2.2, 2.2);
-    const pz = clamp(ball.pos.z * 0.1, -2, 1.5);
+    let bx = ball.pos.x, bz = ball.pos.z;
+    let bestZ = -999, nLive = 0, ax = 0, az = 0;
+    for (const b of world.balls) {
+      if (!b.live && !(b.inLane && !b.live && nLive === 0)) continue;
+      if (b.live) { nLive++; ax += b.x; az += b.z; if (b.z > bestZ) { bestZ = b.z; bx = b.x; bz = b.z; } }
+    }
+    if (nLive > 1) { bx = (bx + ax / nLive) * 0.5; bz = (bz + az / nLive) * 0.5; }
+    const px = clamp(bx * 0.16, -2.2, 2.2);
+    const pz = clamp(bz * 0.1, -2, 1.5);
     const want = tmpV.set(px, 8.6 + Math.sin(G.t * 0.3) * 0.1, 15.8 + pz);
     camera.position.lerp(want, 1 - Math.exp(-3.2 * dt)).add(camShake);
-    camera.lookAt(ball.pos.x * 0.25, 1.1, ball.pos.z * 0.35 - 5);
+    camera.lookAt(bx * 0.25, 1.1, bz * 0.35 - 5);
     return;
   }
   if (G.mode === 'rift') {
@@ -1121,6 +1453,21 @@ function updateCamera(dt) {
     camera.lookAt(camState.target);
     return;
   }
+  if (G.mode === 'reentry') {
+    reentryW.applyCamera(camera, camShake, dt);
+    camera.position.add(camShake);
+    return;
+  }
+  if (G.mode === 'reentry') {
+    const f = reentryW.flight;
+    $('modeTag').textContent = 'RE-ENTRY';
+    $('modeSub').textContent = f.phase === 'dock' ? 'IN ORBIT' : f.phase === 'undock' ? 'UNDOCKING' : f.phase === 'chute' ? 'CHUTES' : f.phase === 'splash' ? 'SPLASHDOWN' : f.phase === 'breakup' ? 'BREAKUP' : f.phase === 'skip' ? 'SKIPPED' : 'INTERFACE';
+    $('objText').textContent = 'ALT ' + f.alt.toFixed(0) + '  ·  PITCH ' + f.pitch.toFixed(1) + '°  ·  HOLD ' + (-14) + ' TO ' + (-7) + '°';
+    if ($('heat')) $('heat').style.width = (f.heat).toFixed(0) + '%';
+    if ($('hull')) $('hull').style.width = Math.max(0, f.hull).toFixed(0) + '%';
+    if ($('corr')) { $('corr').textContent = f.inCorridor ? 'CORRIDOR  LOCK' : (f.pitch < -14.5 ? 'TOO STEEP' : 'TOO SHALLOW'); $('corr').className = f.inCorridor ? 'ok' : 'bad'; }
+    $('speedo').innerHTML = Math.round(f.speed) + ' <span>KM/S ×10</span>';
+  }
   if (G.mode === 'reach' && player) {
     const back = tmpV.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
     const want = tmpV2.copy(player.pos).addScaledVector(back, 7.2).add(tmpV3.set(0, 2.8, 0));
@@ -1131,7 +1478,7 @@ function updateCamera(dt) {
 
 const keys = { FlipL: false, FlipR: false, Plunge: false };
 const input = { mx: 0, my: 0, jump: false, roll: false, throw: false, accel: 0, brake: 0, steer: 0, boost: false };
-const touch = { flipL: false, flipR: false, plunge: false, stickId: null, sx: 0, sy: 0, vx: 0, vy: 0 };
+const touch = { flipL: false, flipR: false, plunge: false, pitchUp: false, pitchDown: false, bankL: false, bankR: false, shield: false, stickId: null, sx: 0, sy: 0, vx: 0, vy: 0 };
 let titleArmed = false;
 
 function anyStartInput() {
@@ -1151,6 +1498,12 @@ addEventListener('keydown', e => {
   if (e.code === 'Space' || e.code === 'ArrowDown') { keys.Plunge = true; if (G.mode === 'rift') input.jump = true; e.preventDefault(); }
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyC') { if (G.mode === 'rift') input.roll = true; if (G.mode === 'reach') input.boost = true; }
   if (e.code === 'KeyF' || e.code === 'KeyJ' || e.code === 'Enter') input.throw = true;
+  if (G.mode === 'pinball' && (e.code === 'KeyQ' || e.code === 'KeyE' || e.code === 'KeyW' || e.code === 'ControlLeft')) {
+    const dx = e.code === 'KeyQ' ? -90 : e.code === 'KeyE' ? 90 : 0;
+    const dz = (e.code === 'KeyW' || e.code === 'ControlLeft') ? -80 : 0;
+    const r = world.nudge(dx, dz);
+    if (r === 'ok') SFX.nudge();
+  }
   keys[e.code] = true;
 });
 addEventListener('keyup', e => {
@@ -1206,6 +1559,11 @@ bindBtn('bRoll', () => input.roll = true);
 bindBtn('bAccel', () => input.accel = 1, () => input.accel = 0);
 bindBtn('bBrake', () => input.brake = 1, () => input.brake = 0);
 bindBtn('bBoost', () => input.boost = true, () => input.boost = false);
+bindBtn('bPitchUp', () => touch.pitchUp = true, () => touch.pitchUp = false);
+bindBtn('bPitchDown', () => touch.pitchDown = true, () => touch.pitchDown = false);
+bindBtn('bBankL', () => touch.bankL = true, () => touch.bankL = false);
+bindBtn('bBankR', () => touch.bankR = true, () => touch.bankR = false);
+bindBtn('bShield', () => touch.shield = true, () => touch.shield = false);
 bindBtn('bPlunge', () => { touch.plunge = true; }, () => { touch.plunge = false; });
 if (TOUCH) document.body.classList.add('touch');
 
@@ -1213,6 +1571,7 @@ function toggleMute() { const m = Snd.toggleMute(); $('mute').innerHTML = m ? '&
 $('mute').addEventListener('click', e => { e.stopPropagation(); toggleMute(); });
 
 function readMove() {
+  if (G.mode !== 'rift' && G.mode !== 'reach') { input.mx = 0; input.my = 0; }
   if (G.mode === 'rift') {
     let mx = 0, my = 0;
     if (keys.KeyA || keys.ArrowLeft) mx -= 1;
@@ -1241,8 +1600,21 @@ function titleInput() {
 function startGame() {
   G.mode = 'pinball'; G.t = 0; G.modeT = 0; G.score = 0; G.balls = 3; G.hits = 0; G.riftHits = 0; G.reachHits = 0;
   G.endT = 0; G.combo = 0; table.setScore(0); G.demoWant = 'rift'; G.riftLitNeed = 3; G.reachLitNeed = 3; G.portalGrace = 0;
-  table.setPortalLit('rift', false); table.setPortalLit('reach', false);
+  G.multiball = false; G.jackpot = 5000; G.locks = 0; G.dmdCall = ''; G.dmdCallT = 0; G.rowlex = '';
+  table.setPortalLit('rift', false); table.setPortalLit('reach', false); table.setPortalLit('reentry', false);
+  G.reentryHits = 0; G.reentryLitNeed = 2;
   for (const t of table.targets) { t.down = false; t.group.visible = true; }
+  if (table.layout) {
+    for (const s of table.layout.standups) { s.lit = false; s.down = false; }
+    for (const d of table.layout.drops) d.down = false;
+    for (const r of table.layout.rollovers) r.lit = false;
+    if (table.layout.kickback) table.layout.kickback.lit = true;
+  }
+  world.clearExtraBalls();
+  world.resetBall(world.primary(), table.layout.plunger.x, table.layout.plunger.z, { live: false, inLane: true });
+  world.tilted = false; world.tiltMeter = 0; world.diverter = 0; world.magnetOn = false;
+  if (table.feat && table.feat.magnet) table.feat.magnet.on = false;
+  extraBalls.forEach((E) => { E.root.visible = false; });
   document.body.classList.add('playing'); $('end').style.display = 'none';
   Snd.onTitle = false; SFX.start(); ModeMusic.set('audio/pinball'); ModeMusic.sync();
   showWorld('table');
@@ -1254,11 +1626,16 @@ function startGame() {
   AP.reset();
 }
 function ballLost() {
+  world.tilted = false;
+  G.multiball = false;
+  world.magnetOn = false;
+  if (table.feat && table.feat.magnet) table.feat.magnet.on = false;
+  world.clearExtraBalls();
+  extraBalls.forEach((E) => { E.root.visible = false; });
   if (DEMO) {
-    // trailer / autopilot: never end the game; kick the ball back into play
-    ball.pos.z = Math.min(ball.pos.z, 6.8);
-    ball.vel.z = Math.min(-8, ball.vel.z - 6);
-    ball.vel.x *= 0.5;
+    resetBallToPlunger();
+    G.sub = 'plunge';
+    showMsg('BALL SAVED', 'DEMONSTRATION', 1.2);
     return;
   }
   SFX.drain(); G.balls--; G.shake = Math.max(G.shake, 0.3);
@@ -1297,34 +1674,35 @@ const AP = {
     if (G.mode === 'pinball') this.pinball(dt);
     else if (G.mode === 'rift') this.rift(dt);
     else if (G.mode === 'reach') this.reach(dt);
+    else if (G.mode === 'reentry') this.reentry(dt);
+  },
+  reentry(dt) {
+    const f = reentryW.flight;
+    if (f.phase !== 'reentry') return;
+    const mid = -10.6;
+    keys.KeyS = keys.KeyW = false;
+    if (f.pitch > mid + 0.5) keys.KeyS = true;      // too shallow — pitch down
+    else if (f.pitch < mid - 0.5) keys.KeyW = true; // too steep — pitch up
+    keys.ShiftLeft = f.heat > 62 && f.shield > 0.3 && f.shieldT <= 0;
   },
   pinball(dt) {
     if (G.sub === 'curl' || G.sub === 'toLane') return;
-    if (G.sub === 'plunge' || (!ball.live && ball.inLane)) {
+    const b0 = world.primary();
+    if (G.sub === 'plunge' || (b0 && !b0.live && b0.inLane)) {
       if (G.modeT > 0.15) keys.Plunge = true;
-      if (ball.charged > 0.72) keys.Plunge = false;
+      if (b0 && b0.charged > 0.72) keys.Plunge = false;
       return;
     }
-    if (ball.pos.z > 3.2 && ball.vel.z > 1) {
-      if (ball.pos.x < 0.3) keys.FlipL = ball.pos.z > 5.0 && ball.pos.z < 7.6;
-      if (ball.pos.x > -0.3) keys.FlipR = ball.pos.z > 5.0 && ball.pos.z < 7.6;
+    for (const b of world.balls) {
+      if (!b.live) continue;
+      if (b.z > 4.8 && b.z < 7.8 && b.vz > 0.4) {
+        if (b.x < 0.55) keys.FlipL = true;
+        if (b.x > -0.55) keys.FlipR = true;
+      }
     }
-    const target = (table.portalRift.lit && G.demoWant === 'rift') ? table.portalRift
-      : (table.portalReach.lit && G.demoWant === 'reach') ? table.portalReach : null;
-    if (!target && ball.pos.z > -4) {
-      ball.vel.x += (0 - ball.pos.x) * dt * 1.6;
-      ball.vel.z += (-6.5 - ball.pos.z) * dt * 0.8;
-    }
-    if (target) {
-      const k = 3.5;
-      ball.vel.x += (target.x - ball.pos.x) * dt * k;
-      ball.vel.z += (target.z - ball.pos.z) * dt * k;
-    }
-    if (ball.pos.z > 7.4 && !ball.inLane) { ball.vel.z = Math.min(ball.vel.z, -6); ball.pos.z = Math.min(ball.pos.z, 7.2); }
-    // force-light portals on a schedule so the trailer always hits them
+    // Force-light portals on a schedule so a demo run still visits both worlds.
     if (G.demoWant === 'rift' && G.modeT > 5.5 && G.sub === 'play') table.setPortalLit('rift', true);
     if (G.demoWant === 'reach' && G.modeT > 2.8 && G.sub === 'play') table.setPortalLit('reach', true);
-    // if the ball still hasn't dropped in, warp on a timer
     if (G.sub === 'play' && G.demoWant === 'rift' && G.modeT > 9.2 && table.portalRift.lit) enterPortal('rift');
     if (G.sub === 'play' && G.demoWant === 'reach' && G.modeT > 6.0 && table.portalReach.lit) enterPortal('reach');
   },
@@ -1411,9 +1789,18 @@ function updateHud(dt) {
   $('hp').style.width = clamp(hero.hp / hero.maxHp, 0, 1) * 100 + '%';
   $('stRift').className = table.portalRift.lit ? 'lit' : '';
   $('stReach').className = table.portalReach.lit ? 'lit reach' : '';
+  if ($('stReentry')) {
+    $('stReentry').className = table.portalReentry && table.portalReentry.lit ? 'lit reentry' : '';
+    $('stReentry').textContent = table.portalReentry && table.portalReentry.lit ? 'RE-ENTRY LIT' : 'RE-ENTRY';
+  }
   $('stRift').textContent = table.portalRift.lit ? 'RIFT LIT' : 'RIFT';
   $('stReach').textContent = table.portalReach.lit ? 'REACH LIT' : 'REACH';
-  if (G.mode === 'pinball') { $('modeTag').textContent = 'PINBALL'; $('modeSub').textContent = 'THE TABLE'; $('objText').textContent = 'LIGHT THE PORTALS'; }
+  if (G.mode === 'pinball') {
+    $('modeTag').textContent = G.multiball ? 'MULTIBALL' : 'PINBALL';
+    $('modeSub').textContent = world.tilted ? 'TILT' : (world.primary() && world.primary().saveT > 0 ? ('BALL SAVE ' + world.primary().saveT.toFixed(1)) : 'THE TABLE');
+    const letters = (table.layout.standups || []).map((s) => s.lit ? s.letter : '·').join('');
+    $('objText').textContent = G.multiball ? ('JACKPOT  ' + G.jackpot) : ('SPELL ROWLEX  ' + letters + '   ·   LIGHT THE PORTALS');
+  }
   if (G.mode === 'rift') { $('modeTag').textContent = 'THE RIFT'; $('modeSub').textContent = 'FLOATING ISLES'; $('objText').textContent = G.riftGoal ? 'ENTER THE EXIT RIFT' : ('CLEAR THE STORM  ·  ' + G.riftKills + '/8'); }
   if (G.mode === 'reach' && player) {
     $('modeTag').textContent = 'THE REACH'; $('modeSub').textContent = 'NEON GRID';
@@ -1456,6 +1843,7 @@ function update(dt) {
       else { setHeroMode('walk'); poseRowlex(H, { t: G.t, sp: 0 }); }
       H.root.position.set(0, lerp(1.05, BALL_R, Math.min(1, k * 1.3)), lerp(1.2, 1.0, k));
       H.root.rotation.x = k * 0.8;
+      extraBalls.forEach((E) => { E.root.visible = false; });
       if (k >= 1) G.sub = 'toLane';
     } else if (G.sub === 'toLane') {
       setHeroMode('ball');
@@ -1464,19 +1852,16 @@ function update(dt) {
       H.shell.rotation.x += dt * 8;
       if (H.root.position.distanceTo(tgt) < 0.2) {
         resetBallToPlunger(); G.sub = 'plunge'; G.modeT = 0;
-        showMsg('LAUNCH', 'HOLD SPACE / DOWN', 1.4);
+        showMsg('LAUNCH', 'HOLD SPACE / DOWN  ·  Q/E NUDGE', 1.6);
       }
     } else {
-      if (ball.live && G.sub === 'plunge') G.sub = 'play';
-      updateFlippers(dt);
-      updatePlunger(dt);
-      const portal = updateBall(dt);
+      const portal = stepPinball(dt);
       updatePortalLights();
       if (portal) enterPortal(portal);
-      else if (ball.live && drainCheck()) ballLost();
     }
     table.update(G.t, dt);
-    poseRowlex(H, { t: G.t, sp: Math.hypot(ball.vel.x, ball.vel.z) });
+    const pb = world.primary();
+    poseRowlex(H, { t: G.t, sp: pb ? Math.hypot(pb.vx, pb.vz) : 0 });
   }
 
   if (G.mode === 'rift') {
@@ -1485,6 +1870,10 @@ function update(dt) {
     updateRiftSpawner(dt);
     riftW.update(G.t, dt);
     input.jump = input.roll = input.throw = false;
+  }
+
+  if (G.mode === 'reentry') {
+    updateReentry(dt);
   }
 
   if (G.mode === 'reach') {
@@ -1547,7 +1936,9 @@ if (CAPTURE) {
     mode: G.mode, sub: G.sub, t: G.t, titleT: G.titleT, modeT: G.modeT, score: G.score, balls: G.balls,
     disc: hero.disc.state, hits: G.hits, riftLit: !!table.portalRift.lit, reachLit: !!table.portalReach.lit,
     enemies: G.enemies.map(e => e.type), place: player ? player.place : null, speed: player ? +player.speed.toFixed(1) : 0,
-    bx: +ball.pos.x.toFixed(2), bz: +ball.pos.z.toFixed(2),
+    bx: +ball.pos.x.toFixed(2), by: +ball.pos.y.toFixed(2), bz: +ball.pos.z.toFixed(2),
+    returned: world.returned, liveBalls: world.balls.filter((b) => b.live).length,
+    oob: world.balls.some((b) => world.outOfBounds(b)),
   });
   window.__cap = {
     step(n) { for (let i = 0; i < n; i++) update(1 / 60); updateHud(n / 60); updateFloats(n / 60); ModeMusic.update(n / 60); render(); return capState(); },
@@ -1557,5 +1948,5 @@ if (CAPTURE) {
 
 window.__dbg = {
   G, hero, ball, table, H, Snd, AP, camState, startGame, enterPortal, leavePortal, openRiftExit,
-  keys, input, get player() { return player; }, get titleArmed() { return titleArmed; },
+  world, BOUNDS, keys, input, resetBallToPlunger, startMultiball, reentryW, get player() { return player; }, get titleArmed() { return titleArmed; },
 };

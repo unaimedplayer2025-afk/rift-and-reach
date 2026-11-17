@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <link rel="icon" href="favicon.ico">
 <title>THE RIFT &amp; THE REACH</title>
-<meta name="description" content="Rowlex is the pinball. Two portals, two worlds: The Rift and The Reach. A 3D pinball portal game.">
+<meta name="description" content="Rowlex is the pinball. Three portals, three worlds: The Rift, The Reach, and Re-Entry. A 3D pinball portal game.">
 <style>
   :root { --cyan: #40e8ff; --purp: #c040ff; --orange: #ff8a20; --red: #ff2a1a; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -29,6 +29,15 @@
   #boostLabel { font-size: 11px; letter-spacing: 3px; margin-bottom: 3px; text-shadow: 0 0 8px var(--orange); }
   #boostBar { height: 12px; border: 2px solid #fff; background: rgba(0,0,0,.5); transform: skewX(-16deg); box-shadow: 0 0 10px var(--orange); }
   #boost { height: 100%; width: 0%; background: linear-gradient(90deg, #ff8a10, #ffee55); }
+  #heatWrap, #hullWrap { width: 220px; height: 14px; border: 2px solid #fff; background: rgba(0,0,0,.5); transform: skewX(-15deg); margin-top: 6px; display: none; }
+  #heatWrap { box-shadow: 0 0 10px #ff8a20; }
+  #hullWrap { box-shadow: 0 0 10px #40e8ff; }
+  #heat { height: 100%; width: 0%; background: linear-gradient(90deg, #ff8a10, #ff2a1a); }
+  #hull { height: 100%; width: 100%; background: linear-gradient(90deg, #1a8a4a, #40e8ff); }
+  #corr { font-size: 13px; letter-spacing: 2px; margin-top: 6px; display: none; }
+  #corr.ok { color: #40ffa0; text-shadow: 0 0 8px #40ffa0; }
+  #corr.bad { color: #ff4a2a; text-shadow: 0 0 8px #ff4a2a; }
+  #portState .lit.reentry { color: var(--orange); text-shadow: 0 0 8px var(--orange); }
   #discSlot { margin-top: 6px; font-size: 13px; letter-spacing: 3px; color: #ff6a3a; text-shadow: 0 0 10px #ff2a1a; }
   #objective { left: 50%; bottom: 18px; transform: translateX(-50%); font-size: 14px; letter-spacing: 2px; text-align: center; white-space: nowrap; }
   #msg { left: 0; right: 0; top: 28%; text-align: center; font-size: 46px; font-style: italic; letter-spacing: 3px; opacity: 0; transition: opacity .3s; }
@@ -60,11 +69,19 @@
   #bBrake { right: 122px; bottom: 36px; display: none; }
   #bBoost { right: 22px; bottom: 26px; width: 64px; height: 64px; border-color: #ff8a10; display: none; }
   #bPlunge { left: 50%; bottom: 28px; transform: translateX(-50%); width: 90px; height: 70px; border-radius: 12px; border-color: #ff8a20; display: none; }
+  #bPitchUp { right: 28px; bottom: 160px; border-color: #ff8a20; display: none; }
+  #bPitchDown { right: 28px; bottom: 70px; border-color: #ff8a20; display: none; }
+  #bBankL { left: 24px; bottom: 70px; display: none; }
+  #bBankR { left: 110px; bottom: 70px; display: none; }
+  #bShield { left: 50%; bottom: 28px; transform: translateX(-50%); width: 100px; height: 70px; border-radius: 12px; border-color: #40e8ff; box-shadow: 0 0 12px #40e8ff; display: none; }
   body.capture #prompt, body.capture #help, body.capture #mute { display: none !important; }
   body.playing #title { display: none; }
   body:not(.playing) .gameHud { display: none !important; }
   body.mode-rift #hpWrap { display: block; }
   body.mode-reach #speedo, body.mode-reach #boostWrap { display: block; }
+  body.mode-reentry #heatWrap, body.mode-reentry #hullWrap, body.mode-reentry #corr, body.mode-reentry #speedo { display: block; }
+  body.mode-reentry #bPitchUp, body.mode-reentry #bPitchDown, body.mode-reentry #bBankL, body.mode-reentry #bBankR, body.mode-reentry #bShield { display: flex; }
+  body.mode-reentry #bDisc, body.mode-reentry #bJump, body.mode-reentry #bRoll, body.mode-reentry #bPlunge { display: none; }
   body.mode-pinball #bPlunge { display: flex; }
   body.mode-pinball #bDisc, body.mode-pinball #bJump, body.mode-pinball #bRoll { display: none; }
   body.mode-reach #bAccel, body.mode-reach #bBrake, body.mode-reach #bBoost { display: flex; }
@@ -81,14 +98,17 @@
 <canvas id="c"></canvas>
 <div id="hudTL" class="hud gameHud">
   <div id="hpWrap"><div id="hp"></div></div>
+  <div id="heatWrap"><div id="heat"></div></div>
+  <div id="hullWrap"><div id="hull"></div></div>
   <div id="score">SCORE 0</div>
   <div id="balls">BALLS 3</div>
 </div>
 <div id="hudTR" class="hud gameHud">
   <div id="modeTag">PINBALL</div>
   <div id="modeSub">THE TABLE</div>
-  <div id="portState"><span id="stRift">RIFT</span> &nbsp; <span id="stReach">REACH</span></div>
+  <div id="portState"><span id="stRift">RIFT</span> &nbsp; <span id="stReach">REACH</span> &nbsp; <span id="stReentry">RE-ENTRY</span></div>
   <div id="speedo">000 <span>KM/H</span></div>
+  <div id="corr">CORRIDOR</div>
 </div>
 <div id="boostWrap" class="hud gameHud">
   <div id="boostLabel">BOOST</div>
@@ -104,7 +124,7 @@
   <div id="logoSub">A PINBALL PORTAL</div>
   <div id="logoHero">ROWLEX</div>
   <div id="prompt">TAP OR PRESS ANY KEY</div>
-  <div id="help">Pinball: Z / ← and / / → flippers · Shifts too · SPACE / ↓ plunger<br>The Rift: WASD · SPACE jump · SHIFT roll · F / J / click disc &nbsp;·&nbsp; The Reach: W accel · S brake · A D steer · SHIFT boost · F disc<br>Phone: halves flip, buttons for jump / disc / boost &nbsp;·&nbsp; M mute</div>
+  <div id="help">Pinball: Z / ← and / / → flippers · Shifts too · SPACE / ↓ plunger · Q / E / W nudge<br>The Rift: WASD · SPACE jump · SHIFT roll · F / J / click disc &nbsp;·&nbsp; The Reach: W accel · S brake · A D steer · SHIFT boost · F disc<br>Re-Entry: W S / arrows pitch · A D bank · SHIFT / SPACE shield<br>Phone: halves flip, buttons for jump / disc / boost / pitch / shield &nbsp;·&nbsp; M mute</div>
 </div>
 <div id="touch" class="gameHud">
   <div id="stick"><div id="knob"></div></div>
@@ -115,6 +135,11 @@
   <div id="bBrake" class="tbtn">BRAKE</div>
   <div id="bBoost" class="tbtn">BOOST</div>
   <div id="bPlunge" class="tbtn">PLUNGE</div>
+  <div id="bPitchUp" class="tbtn">PITCH+</div>
+  <div id="bPitchDown" class="tbtn">PITCH-</div>
+  <div id="bBankL" class="tbtn">BANK L</div>
+  <div id="bBankR" class="tbtn">BANK R</div>
+  <div id="bShield" class="tbtn">SHIELD</div>
 </div>
 <button id="mute" aria-label="mute">&#128266;</button>
 <script type="module" src="./src/main.js"></script>

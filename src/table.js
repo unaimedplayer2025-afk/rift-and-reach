@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { std, glow, additive, part, grp, Tex, instanced, makeCurve, clamp, lerp, damp, rnd, pick } from './util.js';
 import { holographicMat, buildDarkTree, buildIsland, buildFlyer, buildTower } from './models.js';
+import { buildTableFeatures, enclosedWalls, slingSegments } from './table-features.js';
 
 export const BALL_R = 0.42;
 
@@ -579,48 +580,42 @@ export function buildTable() {
   }
   const portalRift = buildPortal(-4.55, -10.6, 0x40e8ff, 'THE RIFT');
   const portalReach = buildPortal(3.45, -10.6, 0xc040ff, 'THE REACH');
+  const portalReentry = buildPortal(0.05, -12.85, 0xff8a20, 'RE-ENTRY');
 
-  // ---------- COLLISION LAYOUT (table-local XZ)
-  const walls = [
-    // left rail
-    { a: [-6.2, 8.2], b: [-6.2, 2], r: 0.12 },
-    { a: [-6.2, 2], b: [-6.3, -4], r: 0.12 },
-    { a: [-6.3, -4], b: [-6.0, -10], r: 0.12 },
-    { a: [-6.0, -10], b: [-5.2, -14.2], r: 0.12 },
-    { a: [-5.2, -14.2], b: [-3.2, -15.8], r: 0.12 },
-    { a: [-3.2, -15.8], b: [0, -16.4], r: 0.12 },
-    // right inner (lower playfield / outlane) — joins the plunger divider
-    { a: [5.25, 8.2], b: [5.25, 2], r: 0.12 },
-    { a: [5.25, 2], b: [5.70, -2], r: 0.12 },
-    // upper-right playfield (left of the lane exit mouth)
-    { a: [3.9, -12.4], b: [4.4, -14.2], r: 0.12 },
-    { a: [4.4, -14.2], b: [2.6, -15.8], r: 0.12 },
-    { a: [2.6, -15.8], b: [0, -16.4], r: 0.12 },
-    // plunger lane left / divider — ends as a one-way tip so the ball can leave
-    { a: [6.0, 8.4], b: [6.0, -2], r: 0.1 },
-    { a: [6.0, -2], b: [6.0, -8.6], r: 0.1 },
-    // plunger lane right
-    { a: [7.15, 8.4], b: [7.15, -2], r: 0.1 },
-    { a: [7.15, -2], b: [7.05, -7], r: 0.1 },
-    { a: [7.05, -7], b: [6.85, -9.2], r: 0.1 },
-    // bottom / outlanes
-    { a: [-6.2, 8.2], b: [-3.4, 8.6], r: 0.12 },
-    { a: [5.25, 8.2], b: [3.1, 8.6], r: 0.12 },
-    // slingshot walls
-    { a: [-4.2, 5.4], b: [-2.2, 3.2], r: 0.1, kind: 'sling', sling: 0, kick: 13 },
-    { a: [3.7, 5.4], b: [1.8, 3.2], r: 0.1, kind: 'sling', sling: 1, kick: 13 },
-    // left outlane divider
-    { a: [-3.6, 8.5], b: [-3.2, 5.6], r: 0.08 },
-    { a: [3.3, 8.5], b: [2.9, 5.6], r: 0.08 },
-    // plunger lane backstop (keeps the ball from falling out the bottom of the lane)
-    { a: [6.0, 8.35], b: [7.15, 8.35], r: 0.14 },
-  ];
+  // High-end toys, multi-level rails, lid, mini-playfield (needs ramp paths as enter fallbacks)
+  const feat = buildTableFeatures(cab, { BALL_R, rampL, rampR });
 
-  // ramp paths (follow when triggered)
-  const rampPaths = [
-    { name: 'left', pts: rampL, enter: { x: -3.8, z: 3.5, r: 0.7, dirZ: -1 }, score: 1500 },
-    { name: 'right', pts: rampR, enter: { x: 2.8, z: 3.2, r: 0.7, dirZ: -1 }, score: 1500 },
-  ];
+  // ---------- COLLISION LAYOUT: fully enclosed cabinet, no void exits
+  const walls = enclosedWalls();
+  const slingsPhys = slingSegments();
+  const rampPaths = feat.paths;
+
+  const layout = {
+    walls,
+    posts: feat.posts,
+    bumpers: bumpers,
+    slings: slingsPhys,
+    flipL: { x: -1.9, z: 6.45, rest: FLIP_REST_L, up: FLIP_UP_L, len: 1.7, thick: 0.22, sign: 1, side: 'L', upRate: 36, downRate: 22 },
+    flipR: { x: 1.55, z: 6.45, rest: FLIP_REST_R, up: FLIP_UP_R, len: 1.7, thick: 0.22, sign: -1, side: 'R', upRate: 36, downRate: 22 },
+    miniFlip: feat.miniFlipSpec,
+    plunger: { x: 6.57, z: 7.15, exitZ: -7.8, exitX: 5.92, reenterX: 6.05, reenterZ: -7.4 },
+    drain: { x0: -1.55, x1: 1.25, z: 8.55 },
+    paths: feat.paths,
+    standups: feat.standups,
+    drops: feat.drops,
+    rollovers: feat.rollovers,
+    spinner: feat.spinner,
+    saucer: feat.saucer,
+    kickback: feat.kickback,
+    captive: feat.captive,
+    magnet: feat.magnet,
+    diverterSw: feat.diverterSw,
+    miniZone: feat.miniZone,
+    miniBumper: feat.miniBumper,
+  };
+
+  // DMD strip sitting on the backglass, just under the painted SCORE well
+  const dmd = feat.makeDmd(bg, 0, scoreY - scoreH * 1.15, 0.19, 7.2, 1.05);
 
   // ---------- LIGHTS (playfield)
   const key = new THREE.PointLight(0xa0d0ff, 1.4, 30, 2); key.position.set(0, 8, 2); root.add(key);
@@ -631,7 +626,7 @@ export function buildTable() {
   // ---------- state for animation
   const state = {
     flash: 0, stormT: 0, stormOn: 0,
-    portalPull: { rift: 0, reach: 0 },
+    portalPull: { rift: 0, reach: 0, reentry: 0 },
   };
 
   function flashBumper(b, strength = 1) {
@@ -641,7 +636,8 @@ export function buildTable() {
     state.flash = Math.max(state.flash, 0.7 * strength);
   }
   function setPortalLit(which, lit) {
-    const p = which === 'rift' ? portalRift : portalReach;
+    const p = which === 'rift' ? portalRift : which === 'reach' ? portalReach : portalReentry;
+    if (!p) return;
     p.lit = lit;
     p.light.intensity = lit ? 2.4 : 0.2;
     p.well.material.opacity = lit ? 0.7 : 0.25;
@@ -659,6 +655,7 @@ export function buildTable() {
     // portal pull visuals
     state.portalPull.rift = damp(state.portalPull.rift, portalRift.lit ? 1 : 0, 3, dt);
     state.portalPull.reach = damp(state.portalPull.reach, portalReach.lit ? 1 : 0, 3, dt);
+    state.portalPull.reentry = damp(state.portalPull.reentry || 0, portalReentry.lit ? 1 : 0, 3, dt);
     const pull = Math.max(state.portalPull.rift, state.portalPull.reach);
     streamMain.uniforms.pull.value = pull;
     for (const m of energyMats) m.uniforms.pull.value = Math.max(m.uniforms.pull.value * 0.9, pull * 0.7);
@@ -666,10 +663,13 @@ export function buildTable() {
     // swirl portals
     portalRift.swirl.rotation.z += dt * (portalRift.lit ? 2.4 : 0.4);
     portalReach.swirl.rotation.z -= dt * (portalReach.lit ? 2.4 : 0.4);
+    portalReentry.swirl.rotation.z += dt * (portalReentry.lit ? 2.8 : 0.35);
     portalRift.swirl.material.opacity = 0.15 + state.portalPull.rift * 0.7;
     portalReach.swirl.material.opacity = 0.15 + state.portalPull.reach * 0.7;
+    portalReentry.swirl.material.opacity = 0.15 + (state.portalPull.reentry || 0) * 0.7;
     portalRift.group.scale.setScalar(1 + Math.sin(t * 3) * 0.03 * (portalRift.lit ? 1 : 0.3));
     portalReach.group.scale.setScalar(1 + Math.sin(t * 3 + 1) * 0.03 * (portalReach.lit ? 1 : 0.3));
+    portalReentry.group.scale.setScalar(1 + Math.sin(t * 3 + 2) * 0.03 * (portalReentry.lit ? 1 : 0.3));
 
     // bumpers idle pulse + flash decay
     for (const b of bumpers) {
@@ -707,6 +707,68 @@ export function buildTable() {
       b.line.material.opacity = b.t > 0 ? Math.min(1, b.t * 10) : 0;
     }
 
+    // insert light chase
+    if (feat.inserts) {
+      const ins = feat.inserts;
+      const n = ins.pts.length;
+      for (let i = 0; i < n; i++) {
+        ins.flash[i] = Math.max(0, ins.flash[i] - dt * 2.8);
+        const chase = 0.25 + 0.75 * Math.max(0, Math.sin(t * 6 + i * 0.45));
+        const pulse = 0.35 + chase * 0.5 + ins.flash[i];
+        ins.dummy.position.set(ins.pts[i][0], 0.03, ins.pts[i][1]);
+        ins.dummy.rotation.x = -Math.PI / 2;
+        ins.dummy.scale.setScalar(0.85 + ins.flash[i] * 0.6);
+        ins.dummy.updateMatrix();
+        ins.mesh.setMatrixAt(i, ins.dummy.matrix);
+      }
+      ins.mesh.instanceMatrix.needsUpdate = true;
+    }
+    // bumper lightning arcs
+    for (const a of feat.arcs) {
+      a.t = Math.max(0, a.t - dt);
+      a.line.material.opacity = a.t > 0 ? Math.min(1, a.t * 8) : 0;
+    }
+    // spinning rift orb
+    if (feat.orb) {
+      feat.orb.group.rotation.y += dt * 0.8;
+      feat.orb.ring.rotation.x += dt * 1.3;
+      feat.orb.ring2.rotation.z -= dt * 1.6;
+      feat.orb.core.position.y = 0.7 + Math.sin(t * 2.2) * 0.08;
+    }
+    // diverter arm
+    if (feat.diverter) {
+      const want = feat.diverter._want || 0;
+      feat.diverter.arm.rotation.y = damp(feat.diverter.arm.rotation.y, want ? 0.7 : -0.55, 8, dt);
+    }
+    // spinner
+    if (feat.spinner && feat.spinner.arm) {
+      feat.spinner.arm.rotation.y = feat.spinner.angle || 0;
+    }
+    // captive ball mesh
+    if (feat.captive && feat.captive.mesh) {
+      feat.captive.mesh.position.set(0, 0.3, feat.captive.ballZ + 1.2);
+    }
+    // magnet pulse
+    if (feat.magnet) {
+      const on = !!feat.magnet.on;
+      feat.magnet.light.intensity = damp(feat.magnet.light.intensity, on ? 2.2 : 0.15, 8, dt);
+      feat.magnet.core.material.opacity = on ? 0.7 + Math.sin(t * 10) * 0.2 : 0.2;
+    }
+    // kickback lamp
+    if (feat.kickback && feat.kickback.face) {
+      feat.kickback.face.material.color.setHex(feat.kickback.lit ? 0x80ffff : 0x143040);
+    }
+    // drop / standup lamps
+    for (const d of feat.drops) {
+      d.group.visible = !d.down;
+    }
+    for (const s of feat.standups) {
+      if (s.face && s.face.material) s.face.material.color.setHex(s.lit ? 0xa0ffe8 : 0x164050);
+    }
+    for (const r of feat.rollovers) {
+      if (r.lamp && r.lamp.material) r.lamp.material.color.setHex(r.lit ? 0xffc070 : 0x3a2010);
+    }
+
     // ships
     for (const s of ships) {
       const p = s.userData.path;
@@ -720,17 +782,46 @@ export function buildTable() {
     tree.rotation.x = Math.sin(t * 0.3) * 0.02;
   }
 
+  function trackBall(x, z) {
+    if (!feat.head) return;
+    const dx = x - 2.55, dz = z + 8.35;
+    feat.head.eye.rotation.y = clamp(-Math.atan2(dx, 3), -0.55, 0.55);
+    feat.head.eye.rotation.x = clamp(Math.atan2(-(dz), 4) * 0.4, -0.35, 0.35);
+  }
+  function flashInserts(kind) {
+    if (!feat.inserts) return;
+    for (let i = 0; i < feat.inserts.flash.length; i++) {
+      if (kind === 'all' || (kind === 'chase' && i % 2 === 0)) feat.inserts.flash[i] = 1;
+    }
+  }
+  function flashArcs() {
+    for (const a of feat.arcs) {
+      a.t = 0.16;
+      const arr = a.line.geometry.attributes.position.array;
+      const n = arr.length / 3 - 1;
+      const ax = a.from[0], ay = a.from[1], az = a.from[2];
+      const bx = a.to[0], by = a.to[1], bz = a.to[2];
+      for (let i = 0; i <= n; i++) {
+        const u = i / n;
+        arr[i * 3] = ax + (bx - ax) * u + (i && i < n ? (Math.random() - 0.5) * 0.5 : 0);
+        arr[i * 3 + 1] = ay + (by - ay) * u + (i && i < n ? Math.random() * 0.4 : 0);
+        arr[i * 3 + 2] = az + (bz - az) * u + (i && i < n ? (Math.random() - 0.5) * 0.5 : 0);
+      }
+      a.line.geometry.attributes.position.needsUpdate = true;
+    }
+  }
+
   return {
     root, space, cab, floor, pfMat,
     flipL, flipR, FLIP_REST_L, FLIP_UP_L, FLIP_REST_R, FLIP_UP_R,
     plungerGrp, plungerRod, plungerKnob,
     bumpers, slings, targets, walls,
-    portalRift, portalReach, rampPaths, rampL, rampR,
+    portalRift, portalReach, portalReentry, rampPaths, rampL, rampR,
     ships, bolts, streamMain, holoMats, energyMats,
-    scoreMesh, setScore,
+    scoreMesh, setScore, dmd,
     stormLight, key, state,
     flashBumper, setPortalLit, update,
-    // world placement: table is already in world space at origin, playfield y=0
+    layout, feat, trackBall, flashInserts, flashArcs,
   };
 }
 

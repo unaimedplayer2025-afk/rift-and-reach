@@ -94,5 +94,48 @@ export const SFX = {
   open()    { Snd.tone(392, 0.12, 'square', 0.07); Snd.tone(523, 0.12, 'square', 0.07, 0, 0.1); Snd.tone(784, 0.3, 'square', 0.07, 0, 0.2); },
   charge()  { Snd.tone(200, 0.5, 'sawtooth', 0.05, 1200); },
   spawn()   { Snd.tone(60, 0.4, 'sawtooth', 0.08, 400); Snd.noise(0.3, 0.15, 5000, 'highpass'); },
-  pad()     { Snd.tone(150, 0.5, 'sine', 0.2, 900); Snd.noise(0.4, 0.15, 3000, 'bandpass', 600); }
+  pad()      { Snd.tone(150, 0.5, 'sine', 0.2, 900); Snd.noise(0.4, 0.15, 3000, 'bandpass', 600); },
+  ramp()     { Snd.noise(0.45, 0.22, 900, 'bandpass', 2800); Snd.tone(220, 0.4, 'sine', 0.07, 880); },
+  jackpot()  { [523, 659, 784, 1046, 1318].forEach((f, i) => Snd.tone(f, 0.22, 'square', 0.1, 0, i * 0.09)); Snd.noise(0.3, 0.12, 2000, 'bandpass', 800); },
+  save()     { Snd.tone(440, 0.12, 'square', 0.09); Snd.tone(880, 0.18, 'square', 0.09, 0, 0.1); },
+  nudge()    { Snd.noise(0.08, 0.18, 200, 'lowpass'); Snd.tone(60, 0.08, 'sine', 0.08); },
+  tilt()     { Snd.tone(90, 0.8, 'sawtooth', 0.16, 40); Snd.noise(0.5, 0.22, 300, 'lowpass'); },
+  saucer()   { Snd.tone(180, 0.2, 'triangle', 0.08, 90); Snd.noise(0.15, 0.1, 700, 'lowpass'); },
+  kicker()   { Snd.tone(140, 0.16, 'sawtooth', 0.12, 50); Snd.noise(0.12, 0.2, 500, 'lowpass'); },
+  spinner()  { Snd.tone(1400, 0.06, 'triangle', 0.05, 900); },
+  magnet()   { Snd.tone(90, 0.35, 'sine', 0.1, 180); Snd.tone(180, 0.35, 'sine', 0.06, 80); },
+  returned() { Snd.tone(330, 0.12, 'square', 0.07); Snd.tone(220, 0.2, 'square', 0.07, 0, 0.1); },
+  undock()   { Snd.tone(90, 0.3, 'sine', 0.08, 40); Snd.noise(0.2, 0.12, 400, 'lowpass'); Snd.tone(220, 0.15, 'triangle', 0.05, 0, 0.2); },
+  reentry()  { Snd.noise(0.6, 0.08, 300, 'lowpass'); Snd.tone(70, 0.8, 'sine', 0.07); },
+  plasma()   { Snd.noise(0.18, 0.16, 900, 'bandpass', 600); Snd.tone(110, 0.2, 'sawtooth', 0.05, 80); },
+  shield()   { Snd.tone(180, 0.2, 'sine', 0.1, 320); Snd.noise(0.12, 0.1, 1200, 'bandpass', 400); },
+  chute()    { Snd.noise(0.25, 0.1, 600, 'lowpass'); Snd.tone(330, 0.3, 'triangle', 0.07, 180); },
+  splash()   { Snd.noise(0.35, 0.16, 400, 'lowpass'); Snd.tone(140, 0.35, 'sine', 0.08, 40); Snd.tone(220, 0.2, 'sine', 0.05, 0, 0.15); },
+  breakup()  { Snd.noise(0.7, 0.28, 200, 'lowpass'); Snd.tone(80, 0.7, 'sawtooth', 0.16, 30); Snd.tone(40, 0.5, 'sine', 0.12); },
+  skip()     { Snd.tone(200, 0.4, 'sine', 0.08, 80); Snd.noise(0.3, 0.1, 800, 'bandpass', 200); },
+  callout(name) {
+    // Simple voice-like formant blips — short announced phrases.
+    const map = {
+      MULTIBALL: [180, 220, 280, 200, 320],
+      JACKPOT: [300, 380, 240, 420],
+      'RIFT OPEN': [200, 260, 340],
+      'REACH OPEN': [180, 240, 300, 360],
+      'BALL SAVED': [240, 200, 280],
+      'BALL RETURNED': [200, 160, 200],
+      TILT: [90, 70],
+      'DANGER': [160, 120, 160],
+      ROWLEX: [200, 240, 180, 260, 220, 300],
+      COMBO: [260, 320, 280],
+      'RE-ENTRY': [160, 200, 260, 320],
+      'RE-ENTRY OPEN': [160, 200, 260, 320],
+      SPLASHDOWN: [200, 260, 320, 260],
+      BREAKUP: [80, 60, 40],
+      SKIPPED: [220, 180, 140],
+    };
+    const seq = map[name] || [200, 250, 180];
+    seq.forEach((f, i) => {
+      Snd.tone(f, 0.11, 'sawtooth', 0.07, f * 0.8, i * 0.09);
+      Snd.tone(f * 1.6, 0.09, 'triangle', 0.035, f * 1.2, i * 0.09);
+    });
+  },
 };
